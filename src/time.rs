@@ -1,3 +1,4 @@
+#![allow(clippy::borrow_interior_mutable_const, clippy::declare_interior_mutable_const)]
 use std::{fmt::{self, Display}, mem, ffi::{CStr, CString}, sync::LazyLock};
 use libc::{self, time_t, c_char};
 use git2::Time;

@@ -25,9 +25,9 @@ mod log;
 mod markdown;
 mod time;
 
-const REPO_PATH: &str = "./test/.git";
+const OUTPUT_PATH: &str = "./site";
+const REPO_PATH:   &str = "./test";
 
-const OUTPUT_PATH:   &str = "site";
 const TREE_SUBDIR:   &str = "tree";
 const BLOB_SUBDIR:   &str = "blob";
 const COMMIT_SUBDIR: &str = "commit";
@@ -65,12 +65,15 @@ struct Readme {
 
 struct RepoRenderer<'repo> {
   pub name: String,
-  pub owner: String,
-  pub description: Option<String>,
-  pub last_commit: Option<Time>,
+
   pub repo: Repository,
+  pub last_commit: Option<Time>,
   pub head: Tree<'repo>,
   pub branch: String,
+
+  pub owner: String,
+  pub description: Option<String>,
+
   pub readme: Option<Readme>,
   pub license: Option<String>,
 }
@@ -110,11 +113,16 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    let owner = {
-      let mut owner_path = PathBuf::from(&path);
-      owner_path.push("owner");
-      let mut owner = String::with_capacity(32);
+    let mut path = PathBuf::from(&path);
+    if !repo.is_bare() {
+      path.push(".git");
+    }
 
+    let owner = {
+      let mut owner_path = path.clone();
+      owner_path.push("owner");
+
+      let mut owner = String::with_capacity(32);
       let read = File::open(owner_path)
         .map(|mut f| f.read_to_string(&mut owner));
 
@@ -132,7 +140,7 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     let description = {
-      let mut dsc_path = PathBuf::from(&path);
+      let mut dsc_path = path.clone();
       dsc_path.push("description");
       let mut dsc = String::with_capacity(512);
 
@@ -170,7 +178,8 @@ impl<'repo> RepoRenderer<'repo> {
     let mut readme = None;
     let mut license = None;
     for entry in head.iter() {
-      if let (Some(ObjectType::Blob), Some(name)) = (entry.kind(), entry.name()) {
+      if let (Some(ObjectType::Blob), Some(name)) =
+             (entry.kind(), entry.name()) {
         if README_NAMES.contains(&name) {
           if let Some(Readme { path: ref old_path, .. }) = readme {
             warnln!("Multiple README files encountered: {old_path:?} and {name:?}. Ignoring {name:?}");
@@ -289,14 +298,18 @@ impl<'repo> RepoRenderer<'repo> {
     }
     writeln!(f, "<nav>")?;
     writeln!(f, "<ul>")?;
-    writeln!(f, "<li{class}><a href=\"/index.html\">summary</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{name}/index.html\">summary</a></li>",
+                name = Escaped(&self.name),
                 class = if title == PageTitle::Summary { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"/{COMMIT_SUBDIR}/index.html\">log</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
+                name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::Log | PageTitle::Commit(_)) { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"/{TREE_SUBDIR}/index.html\">tree</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
+                name = Escaped(&self.name),
                 class = if let PageTitle::TreeEntry(_) = title { " class=\"nav-selected\"" } else { "" })?;
     if self.license.is_some() {
-      writeln!(f, "<li{class}><a href=\"/license.html\">license</a></li>",
+      writeln!(f, "<li{class}><a href=\"/{name}/license.html\">license</a></li>",
+                  name = Escaped(&self.name),
                   class = if title == PageTitle::License { " class=\"nav-selected\"" } else { "" })?;
     }
     writeln!(f, "</ul>")?;
@@ -327,7 +340,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     Ok(())
   }
-  
+
   fn render_subtree(
     &'repo self,
     tree: &Tree<'repo>,
@@ -337,6 +350,7 @@ impl<'repo> RepoRenderer<'repo> {
     blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf, String)>,
   ) -> io::Result<()> {
     let mut blobs_path = PathBuf::from(OUTPUT_PATH);
+    blobs_path.push(&self.name);
     blobs_path.push(BLOB_SUBDIR);
     blobs_path.extend(&parent);
 
@@ -345,6 +359,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     let mut index_path = PathBuf::from(OUTPUT_PATH);
+    index_path.push(&self.name);
     index_path.push(TREE_SUBDIR);
     index_path.extend(&parent);
 
@@ -377,7 +392,8 @@ impl<'repo> RepoRenderer<'repo> {
 
       writeln!(
         &mut f,
-        "<tr><td><a href=\"/{TREE_SUBDIR}/{parent}index.html\" class=\"subtree\">..</a></td></tr>",
+        "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{parent}index.html\" class=\"subtree\">..</a></td></tr>",
+        name = Escaped(&self.name),
         parent = Escaped(&parent),
       )?;
     }
@@ -397,6 +413,7 @@ impl<'repo> RepoRenderer<'repo> {
             .unwrap();
 
           let mut blob_path = PathBuf::from(OUTPUT_PATH);
+          blob_path.push(&self.name);
           blob_path.push(BLOB_SUBDIR);
           blob_path.extend(&path);
 
@@ -415,7 +432,8 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
+            "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
+            name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
 
@@ -440,7 +458,8 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
+            "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
+            name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
 
@@ -465,7 +484,7 @@ impl<'repo> RepoRenderer<'repo> {
           } else {
             writeln!(
               &mut f,
-              "<tr><td>{path}@</td></tr>",
+              "<tr><td><span class=\"subtree\">{path}@</span></td></tr>",
               path = Escaped(&path.to_string_lossy()),
             )?;
           }
@@ -497,6 +516,7 @@ impl<'repo> RepoRenderer<'repo> {
     parent: String,
   ) -> io::Result<()> {
     let mut page_path = PathBuf::from(OUTPUT_PATH);
+    page_path.push(&self.name);
     page_path.push(TREE_SUBDIR);
     page_path.extend(&path);
 
@@ -523,12 +543,14 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</thead>")?;
     writeln!(&mut f, "<tbody>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"/{TREE_SUBDIR}/{parent}/index.html\" class=\"subtree\">..</a><td>")?;
+    writeln!(&mut f, "<td><a href=\"/{name}/{TREE_SUBDIR}/{parent}/index.html\" class=\"subtree\">..</a><td>",
+                     name = Escaped(&self.name))?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
+    writeln!(&mut f, "<td><a href=\"/{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
+                     name = Escaped(&self.name),
                      path = Escaped(&path.to_string_lossy()))?;
     // TODO: print the size differently for larger blobs?
     writeln!(&mut f, "<td align=\"right\">{}B</td>", blob.size())?;
@@ -587,6 +609,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     // ========================================================================
     let mut index_path = PathBuf::from(OUTPUT_PATH);
+    index_path.push(&self.name);
     index_path.push(COMMIT_SUBDIR);
 
     if !index_path.is_dir() {
@@ -622,7 +645,8 @@ impl<'repo> RepoRenderer<'repo> {
 
       writeln!(&mut f, "<article>")?;
       writeln!(&mut f, "<div>")?;
-      writeln!(&mut f, "<span class=\"commit-heading\"><a href=\"/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>")?;
+      writeln!(&mut f, "<span class=\"commit-heading\"><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
+                       name = Escaped(&self.name))?;
       writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
                        datetime  = DateTime(time), date = Date(time))?;
       writeln!(&mut f, "</div>")?;
@@ -727,6 +751,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     // ========================================================================
     let mut path = PathBuf::from(OUTPUT_PATH);
+    path.push(&self.name);
     path.push(COMMIT_SUBDIR);
     path.push(format!("{}.html", commit.id()));
 
@@ -742,19 +767,20 @@ impl<'repo> RepoRenderer<'repo> {
       .summary()
       .expect("commit summary should be valid UTF-8");
     self.render_header(&mut f, PageTitle::Commit(summary))?;
-    
+
     writeln!(&mut f, "<article class=\"commit\">")?;
     writeln!(&mut f, "<dl>")?;
 
     writeln!(&mut f, "<dt>Commit</dt>")?;
-    writeln!(&mut f, "<dd><a href=\"/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
-                     id = commit.id())?;
+    writeln!(&mut f, "<dd><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+                     name = Escaped(&self.name), id = commit.id())?;
 
     if let Ok(ref parent) = commit.parent(0) {
       writeln!(&mut f, "<dt>Parent</dt>")?;
       writeln!(
         &mut f,
-        "<dd><a href=\"/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        "<dd><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        name = Escaped(&self.name),
         id = parent.id()
       )?;
     }
@@ -766,7 +792,7 @@ impl<'repo> RepoRenderer<'repo> {
                      email = Escaped(email))?;
     }
     writeln!(&mut f, "</dd>")?;
-    
+
     writeln!(&mut f, "<dt>Date</dt>")?;
     writeln!(&mut f, "<dd><time datetime=\"{datetime}\">{date}</time></dd>",
                      datetime = DateTime(time), date = FullDate(time))?;
@@ -854,7 +880,8 @@ impl<'repo> RepoRenderer<'repo> {
         Delta::Added => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git /dev/null b/<a href=\"/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git /dev/null b/<a href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
           )?;
         }
@@ -868,7 +895,8 @@ impl<'repo> RepoRenderer<'repo> {
         _ => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
             old_path = delta_info.old_path.to_string_lossy(),
           )?;
@@ -957,6 +985,9 @@ impl<'repo> RepoRenderer<'repo> {
 
   fn render_summary(&self) -> io::Result<()> {
     let mut path = PathBuf::from(OUTPUT_PATH);
+    path.push(&self.name);
+
+    fs::create_dir_all(&path)?;
     path.push("index.html");
 
     let mut f = match File::create(&path) {
@@ -1001,6 +1032,7 @@ impl<'repo> RepoRenderer<'repo> {
 
   pub fn render_license(&self, license: &str) -> io::Result<()> {
     let mut path = PathBuf::from(OUTPUT_PATH);
+    path.push(&self.name);
     path.push("license.html");
 
     let mut f = match File::create(&path) {
