@@ -5,6 +5,8 @@ use std::{
   mem,
   fmt::{self, Display},
   ffi::OsStr,
+  collections::HashMap,
+  time::{Duration, SystemTime},
 };
 use git2::{
   Repository,
@@ -17,6 +19,7 @@ use git2::{
   DiffDelta,
   DiffLineType,
   Time,
+  Oid,
 };
 use time::{DateTime, Date, FullDate};
 
@@ -243,6 +246,17 @@ impl<'repo> RepoRenderer<'repo> {
     })
   }
 
+  fn render(&self) -> io::Result<()> {
+    self.render_summary()?;
+    let last_commit_time = self.render_log()?;
+    if let Some(ref license) = self.license {
+      self.render_license(license)?;
+    }
+    self.render_tree(&last_commit_time)?;
+
+    Ok(())
+  }
+
   /// Prints the HTML preamble
   fn render_header(
     &self,
@@ -316,7 +330,10 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(f, "</nav>")
   }
 
-  pub fn render_tree(&self) -> io::Result<()> {
+  pub fn render_tree(
+    &self,
+    last_commit_time: &HashMap<Oid, SystemTime>,
+  ) -> io::Result<()> {
     let mut tree_stack = Vec::new();
     let mut blob_stack = Vec::new();
 
@@ -330,12 +347,12 @@ impl<'repo> RepoRenderer<'repo> {
       self.render_subtree(
         &tree, path, false,
         &mut tree_stack,
-        &mut blob_stack
+        &mut blob_stack,
       )?;
     }
 
     for (blob, mode, path) in blob_stack {
-      self.render_blob(&blob, mode, path)?;
+      self.render_blob(&blob, mode, path, last_commit_time)?;
     }
 
     Ok(())
@@ -435,10 +452,6 @@ impl<'repo> RepoRenderer<'repo> {
                     path.to_string_lossy());
           } else {
             let mode = Mode(entry.filemode());
-
-            // TODO: [optimize]: check if blob page needs updating?
-            // we don't know in which commit this blob was last modified, but
-            // we could collect a HashMap<Oid, Date> while rendering the log
             blob_stack.push((blob, mode, path));
           }
         }
@@ -456,9 +469,6 @@ impl<'repo> RepoRenderer<'repo> {
             path = Escaped(&path.to_string_lossy()),
           )?;
 
-          // TODO: [optimize]: check if subtree page needs updating?
-          // we don't know in which commit this subtree was last modified, but
-          // we could collect a HashMap<Oid, Date> while rendering the log
           tree_stack.push((subtree, path));
         }
         Some(ObjectType::Commit) => {
@@ -506,13 +516,24 @@ impl<'repo> RepoRenderer<'repo> {
     blob: &Blob<'repo>,
     mode: Mode,
     path: PathBuf,
+    last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
     let mut page_path = PathBuf::from(OUTPUT_PATH);
     page_path.push(&self.name);
     page_path.push(TREE_SUBDIR);
     page_path.extend(&path);
-
     let page_path = format!("{}.html", page_path.to_string_lossy());
+
+    // TODO: [feature]: disable this via a flag
+    // skip rendering the page if the commit the blob was last updated on is
+    // older than the page
+    if let Ok(meta) = fs::metadata(&page_path) {
+      let last_modified = meta.accessed().unwrap();
+      if last_modified > last_commit_time[&blob.id()] {
+        return Ok(());
+      }
+    }
+
     let mut f = match File::create(&page_path) {
       Ok(f)  => f,
       Err(e) => {
@@ -584,7 +605,9 @@ impl<'repo> RepoRenderer<'repo> {
     Ok(())
   }
 
-  fn render_log(&self) -> io::Result<()> {
+  fn render_log(&self) -> io::Result<HashMap<Oid, SystemTime>> {
+    let mut last_mofied = HashMap::new();
+
     let mut revwalk = self.repo.revwalk().unwrap();
     revwalk.push_head().unwrap();
     let mut commits = Vec::new();
@@ -654,14 +677,20 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</html>")?;
 
     for commit in commits {
-      // TODO: [optimize]: check if commit page needs updating
-      self.render_commit(&commit)?;
+      self.render_commit(&commit, &mut last_mofied)?;
     }
 
-    Ok(())
+    Ok(last_mofied)
   }
 
-  fn render_commit(&self, commit: &Commit<'repo>) -> io::Result<()> {
+  /// Renders the commit to HTML and updates the access time
+  ///
+  /// Shorcircutes if the commit page already exists.
+  fn render_commit(
+    &self,
+    commit: &Commit<'repo>,
+    last_commit_time: &mut HashMap<Oid, SystemTime>,
+  ) -> io::Result<()> {
     #[derive(Debug)]
     struct DeltaInfo<'delta> {
       id: usize,
@@ -700,6 +729,19 @@ impl<'repo> RepoRenderer<'repo> {
       let new_file = diff_delta.new_file();
       let old_path = &old_file.path().unwrap();
       let new_path = &new_file.path().unwrap();
+
+      let id = new_file.id();
+      let commit_time = Duration::from_secs(commit.time().seconds() as u64);
+      let commit_time = SystemTime::UNIX_EPOCH + commit_time;
+      if let Some(time) = last_commit_time.get_mut(&id) {
+        // the newest time is NOT garanteed by
+        // the order we loop through the commits
+        if *time < commit_time {
+          *time = commit_time;
+        }
+      } else {
+        last_commit_time.insert(id, commit_time);
+      }
 
       let patch = Patch::from_diff(&diff, delta_id)
         .unwrap()
@@ -745,6 +787,12 @@ impl<'repo> RepoRenderer<'repo> {
     path.push(&self.name);
     path.push(COMMIT_SUBDIR);
     path.push(format!("{}.html", commit.id()));
+
+    // TODO: [feature]: add a flag to ignore this
+    // skip rendering the commit page if the file already exists
+    if path.exists() {
+      return Ok(());
+    }
 
     let mut f = match File::create(&path) {
       Ok(f)  => f,
@@ -1057,20 +1105,17 @@ fn main() -> Result<(), ()> {
       for entry in dir.flatten() {
         match entry.file_type() {
           Ok(ft) if ft.is_dir() => {
-            // TODO: do we need to allocate here?
             let repo_path = entry.path();
-            let repo_name = entry.file_name().to_string_lossy().to_string();
+            let repo_name = entry.file_name();
 
-            let renderer = RepoRenderer::open(&repo_path, &repo_name)?;
+            let renderer = RepoRenderer::open(
+              &repo_path,
+              &repo_name.to_string_lossy(),
+            )?;
 
-            infoln!("Updating \"{repo_name}\" at {repo_path:?}...");
-            renderer.render_summary().map_err(|_| ())?;
-            if let Some(ref license) = renderer.license {
-              renderer.render_license(license).map_err(|_| ())?;
-            }
-            renderer.render_tree().map_err(|_| ())?;
-            renderer.render_log().map_err(|_| ())?;
-            infoln!("Done!");
+            info!("Updating pages for {repo_path:?}...");
+            renderer.render().map_err(|_| ())?;
+            info_done!();
           }
           _ => continue,
         }
