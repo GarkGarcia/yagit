@@ -75,7 +75,7 @@ macro_rules! infoln {
 #[macro_export]
 macro_rules! info_done {
     () => ({
-        let _ = writeln!(io::stdout().lock(), " Done!");
+        let _ = writeln!(io::stdout().lock(), " done!");
     });
 
     // infoln!("a {} event", "log");
