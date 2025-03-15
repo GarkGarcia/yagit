@@ -648,7 +648,9 @@ impl<'repo> RepoRenderer<'repo> {
 
       let author = commit_sig.name().unwrap();
       let time = commit_sig.when();
-      let msg = commit.message().unwrap();
+      let msg = commit
+        .summary()
+        .expect("commit summary should be valid UTF-8");
 
       let id = commit.id();
 
