@@ -4,6 +4,7 @@ use std::{
   path::{Path, PathBuf},
   mem,
   fmt::{self, Display},
+  ffi::OsStr,
 };
 use git2::{
   Repository,
@@ -26,7 +27,6 @@ mod markdown;
 mod time;
 
 const OUTPUT_PATH: &str = "./site";
-const REPO_PATH:   &str = "./test";
 
 const TREE_SUBDIR:   &str = "tree";
 const BLOB_SUBDIR:   &str = "blob";
@@ -79,10 +79,10 @@ struct RepoRenderer<'repo> {
 }
 
 impl<'repo> RepoRenderer<'repo> {
-  fn open<P>(path: P, name: String) -> Result<Self, ()>
-  where 
-    P: AsRef<Path> + fmt::Debug,
-    PathBuf: for <'a> From<&'a P>,
+  fn open<P, S>(path: P, name: S) -> Result<Self, ()>
+  where
+    P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
+    S: AsRef<str>,
   {
     let repo = match Repository::open(&path) {
       Ok(repo) => repo,
@@ -136,7 +136,7 @@ impl<'repo> RepoRenderer<'repo> {
           errorln!("Could not read the owner of {:?}: {e}", path);
           return Err(());
         }
-      } 
+      }
     };
 
     let description = {
@@ -159,7 +159,7 @@ impl<'repo> RepoRenderer<'repo> {
                   path);
           None
         }
-      } 
+      }
     };
 
     let last_commit = {
@@ -231,7 +231,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     Ok(Self {
-      name,
+      name: String::from(name.as_ref()),
       owner,
       head,
       branch,
@@ -334,8 +334,8 @@ impl<'repo> RepoRenderer<'repo> {
       )?;
     }
 
-    for (blob, mode, path, parent) in blob_stack {
-      self.render_blob(&blob, mode, path, parent)?;
+    for (blob, mode, path) in blob_stack {
+      self.render_blob(&blob, mode, path)?;
     }
 
     Ok(())
@@ -347,7 +347,7 @@ impl<'repo> RepoRenderer<'repo> {
     parent: PathBuf,
     root: bool,
     tree_stack: &mut Vec<(Tree<'repo>, PathBuf)>,
-    blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf, String)>,
+    blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf)>,
   ) -> io::Result<()> {
     let mut blobs_path = PathBuf::from(OUTPUT_PATH);
     blobs_path.push(&self.name);
@@ -385,16 +385,9 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<tbody>")?;
 
     if !root {
-      let parent = parent
-        .parent()
-        .expect("nested directory should have a parent")
-        .to_string_lossy();
-
       writeln!(
         &mut f,
-        "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{parent}index.html\" class=\"subtree\">..</a></td></tr>",
-        name = Escaped(&self.name),
-        parent = Escaped(&parent),
+        "<tr><td><a href=\"..\" class=\"subtree\">..</a></td></tr>",
       )?;
     }
 
@@ -438,7 +431,7 @@ impl<'repo> RepoRenderer<'repo> {
           )?;
 
           if name == "index" {
-            warnln!("Blob named {path:?}! Skiping \"{}.html\"...", 
+            warnln!("Blob named {path:?}! Skiping \"{}.html\"...",
                     path.to_string_lossy());
           } else {
             let mode = Mode(entry.filemode());
@@ -446,7 +439,7 @@ impl<'repo> RepoRenderer<'repo> {
             // TODO: [optimize]: check if blob page needs updating?
             // we don't know in which commit this blob was last modified, but
             // we could collect a HashMap<Oid, Date> while rendering the log
-            blob_stack.push((blob, mode, path, parent.to_string_lossy().to_string()));
+            blob_stack.push((blob, mode, path));
           }
         }
         Some(ObjectType::Tree) => {
@@ -513,7 +506,6 @@ impl<'repo> RepoRenderer<'repo> {
     blob: &Blob<'repo>,
     mode: Mode,
     path: PathBuf,
-    parent: String,
   ) -> io::Result<()> {
     let mut page_path = PathBuf::from(OUTPUT_PATH);
     page_path.push(&self.name);
@@ -543,8 +535,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</thead>")?;
     writeln!(&mut f, "<tbody>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"/{name}/{TREE_SUBDIR}/{parent}/index.html\" class=\"subtree\">..</a><td>",
-                     name = Escaped(&self.name))?;
+    writeln!(&mut f, "<td><a href=\"..\" class=\"subtree\">..</a><td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
@@ -711,7 +702,7 @@ impl<'repo> RepoRenderer<'repo> {
       let new_path = &new_file.path().unwrap();
 
       let patch = Patch::from_diff(&diff, delta_id)
-        .unwrap() 
+        .unwrap()
         .expect("diff should have patch");
 
       let num_hunks = patch.num_hunks();
@@ -1059,26 +1050,39 @@ impl<'repo> RepoRenderer<'repo> {
 }
 
 fn main() -> Result<(), ()> {
-  let repo = RepoRenderer::open(REPO_PATH, String::from("test"))?;
+  const REPOS_PATH: &str = "./test";
 
-  infoln!("Repo owner is {}!", repo.owner.trim());
+  match fs::read_dir(REPOS_PATH) {
+    Ok(dir) => {
+      for entry in dir.flatten() {
+        match entry.file_type() {
+          Ok(ft) if ft.is_dir() => {
+            // TODO: do we need to allocate here?
+            let repo_path = entry.path();
+            let repo_name = entry.file_name().to_string_lossy().to_string();
 
-  if let Some(date) = repo.last_commit {
-    infoln!("last commit at {}", date.seconds());
-  } else {
-    infoln!("no commits");
+            let renderer = RepoRenderer::open(&repo_path, &repo_name)?;
+
+            infoln!("Updating \"{repo_name}\" at {repo_path:?}...");
+            renderer.render_summary().map_err(|_| ())?;
+            if let Some(ref license) = renderer.license {
+              renderer.render_license(license).map_err(|_| ())?;
+            }
+            renderer.render_tree().map_err(|_| ())?;
+            renderer.render_log().map_err(|_| ())?;
+            infoln!("Done!");
+          }
+          _ => continue,
+        }
+      }
+
+      Ok(())
+    }
+    Err(e) => {
+      errorln!("Could not read repos dir: {e}");
+      Err(())
+    }
   }
-
-  infoln!("Writting the HTML for the HEAD tree");
-  repo.render_summary().map_err(|_| ())?;
-  if let Some(ref license) = repo.license {
-    repo.render_license(license).map_err(|_| ())?;
-  }
-  repo.render_tree().map_err(|_| ())?;
-  repo.render_log().map_err(|_| ())?;
-  infoln!("Done!");
-
-  Ok(())
 }
 
 fn render_footer(f: &mut File) -> io::Result<()> {
