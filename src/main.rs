@@ -508,7 +508,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</thead>")?;
     writeln!(&mut f, "<tbody>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"..\" class=\"subtree\">..</a><td>")?;
+    writeln!(&mut f, "<td><a href=\"./\" class=\"subtree\">..</a><td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
@@ -1281,7 +1281,7 @@ fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
       writeln!(f, "<title>{repo}</title>", repo = Escaped(repo_name))?;
     }
     PageTitle::TreeEntry { repo_name, path } => {
-      writeln!(f, "<title>/{repo} at {path}</title>",
+      writeln!(f, "<title>/{path} at {repo}</title>",
                   repo = Escaped(repo_name),
                   path = Escaped(&path.to_string_lossy()))?;
     }
