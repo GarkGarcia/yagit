@@ -35,53 +35,60 @@ const TREE_SUBDIR:   &str = "tree";
 const BLOB_SUBDIR:   &str = "blob";
 const COMMIT_SUBDIR: &str = "commit";
 
-const README_NAMES: &[&str] = &[ "README", "README.txt", "README.md" ];
+const README_NAMES: &[&str] = &["README", "README.txt", "README.md"];
 const LICENSE_NAME: &str    = "LICENSE";
 
 /// A wrapper for HTML-escaped strings
 struct Escaped<'a>(pub &'a str);
 
+impl Display for Escaped<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    // TODO: [optimize]: use SIMD for this?
+    for c in self.0.chars() {
+      match c {
+        '<'  => write!(f, "&lt;")?,
+        '>'  => write!(f, "&gt;")?,
+        '&'  => write!(f, "&amp;")?,
+        '"'  => write!(f, "&quot;")?,
+        '\'' => write!(f, "&apos;")?,
+        c  => c.fmt(f)?,
+      }
+    }
+
+    Ok(())
+  }
+}
+
 /// A wrapper for HTML-escaped strings encoded as UTF-8
 struct EscapedUtf8<'a>(pub &'a [u8]);
 
+impl Display for EscapedUtf8<'_> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+    let s = unsafe { std::str::from_utf8_unchecked(self.0) };
+    Escaped(s).fmt(f)
+  }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PageTitle<'a> {
-  Summary,
-  Log,
-  TreeEntry(&'a Path),
-  Commit(&'a str),
-  License,
+  Index,
+  Summary { repo_name: &'a str },
+  Log { repo_name: &'a str },
+  TreeEntry { repo_name: &'a str, path: &'a Path, },
+  Commit { repo_name: &'a str, summary: &'a str },
+  License { repo_name: &'a str },
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReadmeFormat {
-  Txt,
-  Md,
-}
-
-#[derive(Clone, Debug)]
-struct Readme {
-  content: String,
-  path:    String,
-  format:  ReadmeFormat,
-}
-
-struct RepoRenderer<'repo> {
+struct RepoInfo {
   pub name: String,
-
-  pub repo: Repository,
-  pub last_commit: Option<Time>,
-  pub head: Tree<'repo>,
-  pub branch: String,
-
   pub owner: String,
   pub description: Option<String>,
 
-  pub readme: Option<Readme>,
-  pub license: Option<String>,
+  pub repo: Repository,
+  pub last_commit: Option<Time>,
 }
 
-impl<'repo> RepoRenderer<'repo> {
+impl RepoInfo {
   fn open<P, S>(path: P, name: S) -> Result<Self, ()>
   where
     P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
@@ -95,24 +102,16 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    let (head, branch) = {
-      match repo.head() {
-        Ok(head) => unsafe {
-          let branch = head
-            .shorthand()
-            .expect("should be able to get HEAD shorthand")
-            .to_string();
+    let last_commit = {
+      let mut revwalk = repo.revwalk().unwrap();
+      revwalk.push_head().unwrap();
 
-          let head = mem::transmute::<&Tree<'_>, &Tree<'repo>>(
-            &head.peel_to_tree().unwrap()
-          );
-
-          (head.clone(), branch)
-        }
-        Err(e) => {
-          errorln!("Could not retrieve HEAD of {path:?}: {e}");
-          return Err(());
-        }
+      if let Some(Ok(last_oid)) = revwalk.next() {
+        let commit = repo.find_commit(last_oid).unwrap();
+        let time = commit.author().when();
+        Some(time)
+      } else {
+        None
       }
     };
 
@@ -165,88 +164,76 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    let last_commit = {
-      let mut revwalk = repo.revwalk().unwrap();
-      revwalk.push_head().unwrap();
-
-      if let Some(Ok(last_oid)) = revwalk.next() {
-        let commit = repo.find_commit(last_oid).unwrap();
-        let time = commit.author().when();
-        Some(time)
-      } else {
-        None
-      }
-    };
-
-    let mut readme = None;
-    let mut license = None;
-    for entry in head.iter() {
-      if let (Some(ObjectType::Blob), Some(name)) =
-             (entry.kind(), entry.name()) {
-        if README_NAMES.contains(&name) {
-          if let Some(Readme { path: ref old_path, .. }) = readme {
-            warnln!("Multiple README files encountered: {old_path:?} and {name:?}. Ignoring {name:?}");
-            continue;
-          }
-
-          let blob = entry
-            .to_object(&repo)
-            .unwrap()
-            .peel_to_blob()
-            .unwrap();
-
-          if blob.is_binary() {
-            warnln!("README file {name:?} is binary. Ignoring {name:?}");
-            continue;
-          }
-
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
-
-          let format = if name == "README.md" {
-            ReadmeFormat::Md
-          } else {
-            ReadmeFormat::Txt
-          };
-
-          readme = Some(Readme { content, path: name.to_string(), format, });
-        } else if name == LICENSE_NAME {
-          let blob = entry
-            .to_object(&repo)
-            .unwrap()
-            .peel_to_blob()
-            .unwrap();
-
-          if blob.is_binary() {
-            warnln!("LICENSE file is binary. Ignoring it");
-            continue;
-          }
-
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
-
-          // TODO: parse the license from content?
-          license = Some(content);
-        }
-      }
-    }
-
     Ok(Self {
       name: String::from(name.as_ref()),
       owner,
-      head,
-      branch,
       description,
-      last_commit,
       repo,
-      readme,
-      license,
+      last_commit,
     })
   }
+}
 
-  fn render(&self) -> io::Result<()> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadmeFormat {
+  Txt,
+  Md,
+}
+
+#[derive(Clone, Debug)]
+struct Readme {
+  content: String,
+  path:    String,
+  format:  ReadmeFormat,
+}
+
+impl RepoInfo {
+  fn from_dir<P>(path: P) -> Result<Vec<Self>, ()>
+  where
+    P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
+  {
+    let mut result = Vec::new();
+
+    match fs::read_dir(&path) {
+      Ok(dir) => {
+        for entry in dir.flatten() {
+          match entry.file_type() {
+            Ok(ft) if ft.is_dir() => {
+              let repo_path = entry.path();
+              let repo_name = entry.file_name();
+
+              result.push(
+                RepoInfo::open(&repo_path, repo_name.to_string_lossy())?
+              );
+            }
+            _ => continue,
+          }
+        }
+
+        Ok(result)
+      }
+      Err(e) => {
+        errorln!("Could not read repositories at {path:?} dir: {e}");
+        Err(())
+      }
+    }
+  }
+}
+
+struct RepoRenderer<'repo> {
+  pub name: String,
+  pub description: Option<String>,
+
+  pub repo: Repository,
+  pub head: Tree<'repo>,
+  pub branch: String,
+
+  pub readme: Option<Readme>,
+  pub license: Option<String>,
+}
+
+impl<'repo> RepoRenderer<'repo> {
+  pub fn render(&self) -> io::Result<()> {
     self.render_summary()?;
     let last_commit_time = self.render_log()?;
     if let Some(ref license) = self.license {
@@ -263,48 +250,7 @@ impl<'repo> RepoRenderer<'repo> {
     f: &mut File,
     title: PageTitle<'repo>
   ) -> io::Result<()> {
-    writeln!(f, "<!DOCTYPE html>")?;
-    writeln!(f, "<html>")?;
-    writeln!(f, "<head>")?;
-    writeln!(f, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>")?;
-    writeln!(f, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>")?;
-
-    match title {
-      PageTitle::Summary => {
-        writeln!(f, "<title>{repo}</title>",
-                    repo = Escaped(&self.name))?;
-      }
-      PageTitle::TreeEntry(path) => {
-        writeln!(f, "<title>/{name} at {repo}</title>",
-                    repo = Escaped(&self.name),
-                    name = Escaped(&path.to_string_lossy()))?;
-      }
-      PageTitle::Log => {
-        writeln!(f, "<title>{repo} log</title>", repo = Escaped(&self.name))?;
-      }
-      PageTitle::Commit(summary) => {
-        writeln!(f, "<title>{repo}: {summary}</title>",
-                    repo = Escaped(&self.name),
-                    summary = Escaped(summary.trim()))?;
-      }
-      PageTitle::License => {
-        writeln!(f, "<title>{repo} license</title>",
-                    repo = Escaped(&self.name))?;
-      }
-    }
-
-    writeln!(f, "<link rel=\"icon\" type=\"image/svg\" href=\"./favicon.svg\" />")?;
-    writeln!(f, "<link rel=\"stylesheet\" type=\"text/css\" href=\"/styles.css\" />")?;
-    writeln!(f, "</head>")?;
-    writeln!(f, "<body>")?;
-    writeln!(f, "<header>")?;
-    writeln!(f, "<nav>")?;
-    writeln!(f, "<a href=\"/index.html\">")?;
-    writeln!(f, "<img aria-hidden=\"true\" alt=\"Website logo\" src=\"./favicon.svg\">")?;
-    writeln!(f, "git.pablopie.xyz")?;
-    writeln!(f, "</a>")?;
-    writeln!(f, "</nav>")?;
-    writeln!(f, "</header>")?;
+    render_header(f, title)?;
     writeln!(f, "<main>")?;
     writeln!(f, "<h1>{title}</h1>", title = Escaped(&self.name))?;
     if let Some(ref description) = self.description {
@@ -314,17 +260,17 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(f, "<ul>")?;
     writeln!(f, "<li{class}><a href=\"/{name}/index.html\">summary</a></li>",
                 name = Escaped(&self.name),
-                class = if title == PageTitle::Summary { " class=\"nav-selected\"" } else { "" })?;
+                class = if matches!(title, PageTitle::Summary { .. }) { " class=\"nav-selected\"" } else { "" })?;
     writeln!(f, "<li{class}><a href=\"/{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
                 name = Escaped(&self.name),
-                class = if matches!(title, PageTitle::Log | PageTitle::Commit(_)) { " class=\"nav-selected\"" } else { "" })?;
+                class = if matches!(title, PageTitle::Log { .. } | PageTitle::Commit { .. }) { " class=\"nav-selected\"" } else { "" })?;
     writeln!(f, "<li{class}><a href=\"/{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
                 name = Escaped(&self.name),
-                class = if let PageTitle::TreeEntry(_) = title { " class=\"nav-selected\"" } else { "" })?;
+                class = if matches!(title, PageTitle::TreeEntry { .. }) { " class=\"nav-selected\"" } else { "" })?;
     if self.license.is_some() {
       writeln!(f, "<li{class}><a href=\"/{name}/license.html\">license</a></li>",
                   name = Escaped(&self.name),
-                  class = if title == PageTitle::License { " class=\"nav-selected\"" } else { "" })?;
+                  class = if matches!(title, PageTitle::License { .. }) { " class=\"nav-selected\"" } else { "" })?;
     }
     writeln!(f, "</ul>")?;
     writeln!(f, "</nav>")
@@ -395,7 +341,10 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    self.render_header(&mut f, PageTitle::TreeEntry(&parent))?;
+    self.render_header(
+      &mut f,
+      PageTitle::TreeEntry { repo_name: &self.name, path: &parent },
+    )?;
     writeln!(&mut f, "<div class=\"table-container\">")?;
     writeln!(&mut f, "<table>")?;
     writeln!(&mut f, "<thead><tr><td>Name</td><tr></thead>")?;
@@ -542,7 +491,10 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    self.render_header(&mut f, PageTitle::TreeEntry(&path))?;
+    self.render_header(
+      &mut f,
+      PageTitle::TreeEntry { repo_name: &self.name, path: &path },
+    )?;
 
     writeln!(&mut f, "<div class=\"table-container\">")?;
     writeln!(&mut f, "<table>")?;
@@ -640,7 +592,7 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    self.render_header(&mut f, PageTitle::Log)?;
+    self.render_header(&mut f, PageTitle::Log { repo_name: &self.name })?;
     writeln!(&mut f, "<div class=\"article-list\">")?;
 
     for commit in &commits {
@@ -807,7 +759,11 @@ impl<'repo> RepoRenderer<'repo> {
     let summary = commit
       .summary()
       .expect("commit summary should be valid UTF-8");
-    self.render_header(&mut f, PageTitle::Commit(summary))?;
+
+    self.render_header(
+      &mut f,
+      PageTitle::Commit { repo_name: &self.name, summary }
+    )?;
 
     writeln!(&mut f, "<article class=\"commit\">")?;
     writeln!(&mut f, "<dl>")?;
@@ -948,7 +904,8 @@ impl<'repo> RepoRenderer<'repo> {
         writeln!(&mut f, "Binary files differ")?;
       } else {
         for hunk_id in 0..delta_info.patch.num_hunks() {
-          // we cannot cache the hunks: libgit invalidates the data after a while
+          // we cannot cache the hunks:
+          // libgit invalidates the data after a while
           let (hunk, lines_of_hunk) = delta_info.patch.hunk(hunk_id).unwrap();
 
           write!(&mut f, "<a href=\"#d{delta_id}-{hunk_id}\" id=\"d{delta_id}-{hunk_id}\" class=\"h\">")?;
@@ -1040,7 +997,7 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     // ========================================================================
-    self.render_header(&mut f, PageTitle::Summary)?;
+    self.render_header(&mut f, PageTitle::Summary { repo_name: &self.name })?;
 
     writeln!(&mut f, "<ul>")?;
     writeln!(&mut f, "<li>refs: {branch}</li>",
@@ -1085,7 +1042,7 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     // ========================================================================
-    self.render_header(&mut f, PageTitle::License)?;
+    self.render_header(&mut f, PageTitle::License { repo_name: &self.name })?;
     writeln!(&mut f, "<section id=\"license\">")?;
     writeln!(&mut f, "<pre>{}</pre>", Escaped(license))?;
     writeln!(&mut f, "</section>")?;
@@ -1099,83 +1056,96 @@ impl<'repo> RepoRenderer<'repo> {
   }
 }
 
-fn main() -> Result<(), ()> {
-  const REPOS_PATH: &str = "./test";
+impl<'repo> TryFrom<RepoInfo> for RepoRenderer<'repo> {
+  type Error = ();
 
-  match fs::read_dir(REPOS_PATH) {
-    Ok(dir) => {
-      for entry in dir.flatten() {
-        match entry.file_type() {
-          Ok(ft) if ft.is_dir() => {
-            let repo_path = entry.path();
-            let repo_name = entry.file_name();
+  fn try_from(repo: RepoInfo) -> Result<Self, Self::Error> {
+    let (head, branch) = {
+      match repo.repo.head() {
+        Ok(head) => unsafe {
+          let branch = head
+            .shorthand()
+            .expect("should be able to get HEAD shorthand")
+            .to_string();
 
-            let renderer = RepoRenderer::open(
-              &repo_path,
-              &repo_name.to_string_lossy(),
-            )?;
+          let head = mem::transmute::<&Tree<'_>, &Tree<'repo>>(
+            &head.peel_to_tree().unwrap()
+          );
 
-            info!("Updating pages for {repo_path:?}...");
-            renderer.render().map_err(|_| ())?;
-            info_done!();
-          }
-          _ => continue,
+          (head.clone(), branch)
+        }
+        Err(e) => {
+          errorln!("Could not retrieve HEAD of {name:?}: {e}",
+                   name = repo.name);
+          return Err(());
         }
       }
+    };
 
-      Ok(())
-    }
-    Err(e) => {
-      errorln!("Could not read repos dir: {e}");
-      Err(())
-    }
-  }
-}
+    let mut readme = None;
+    let mut license = None;
+    for entry in head.iter() {
+      if let (Some(ObjectType::Blob), Some(name)) =
+             (entry.kind(), entry.name()) {
+        if README_NAMES.contains(&name) {
+          if let Some(Readme { path: ref old_path, .. }) = readme {
+            warnln!("Multiple README files encountered: {old_path:?} and {name:?}. Ignoring {name:?}");
+            continue;
+          }
 
-fn render_footer(f: &mut File) -> io::Result<()> {
-  writeln!(f, "<footer>")?;
-  writeln!(f, "made with ❤️ by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
-  writeln!(f, "</footer>")
-}
+          let blob = entry
+            .to_object(&repo.repo)
+            .unwrap()
+            .peel_to_blob()
+            .unwrap();
 
-fn log_floor(n: usize) -> usize {
-  if n == 0 {
-    return 1;
-  }
+          if blob.is_binary() {
+            warnln!("README file {name:?} is binary. Ignoring {name:?}");
+            continue;
+          }
 
-  let mut d = 0;
-  let mut m = n;
+          let content = std::str::from_utf8(blob.content())
+            .expect("README contents should be UTF-8")
+            .to_string();
 
-  while m > 0 {
-    d += 1;
-    m /= 10;
-  }
+          let format = if name == "README.md" {
+            ReadmeFormat::Md
+          } else {
+            ReadmeFormat::Txt
+          };
 
-  d
-}
+          readme = Some(Readme { content, path: name.to_string(), format, });
+        } else if name == LICENSE_NAME {
+          let blob = entry
+            .to_object(&repo.repo)
+            .unwrap()
+            .peel_to_blob()
+            .unwrap();
 
-impl Display for EscapedUtf8<'_> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    let s = unsafe { std::str::from_utf8_unchecked(self.0) };
-    Escaped(s).fmt(f)
-  }
-}
+          if blob.is_binary() {
+            warnln!("LICENSE file is binary. Ignoring it");
+            continue;
+          }
 
-impl Display for Escaped<'_> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    // TODO: [optimize]: use SIMD for this?
-    for c in self.0.chars() {
-      match c {
-        '<'  => write!(f, "&lt;")?,
-        '>'  => write!(f, "&gt;")?,
-        '&'  => write!(f, "&amp;")?,
-        '"'  => write!(f, "&quot;")?,
-        '\'' => write!(f, "&apos;")?,
-        c  => c.fmt(f)?,
+          let content = std::str::from_utf8(blob.content())
+            .expect("README contents should be UTF-8")
+            .to_string();
+
+          // TODO: parse the license from content?
+          license = Some(content);
+        }
       }
     }
 
-    Ok(())
+    Ok(Self {
+      name: repo.name,
+      head,
+      branch,
+      description: repo.description,
+      repo: repo.repo,
+      readme,
+      license,
+    })
   }
 }
 
@@ -1278,4 +1248,143 @@ impl Display for Mode {
 
     Ok(())
   }
+}
+
+fn log_floor(n: usize) -> usize {
+  if n == 0 {
+    return 1;
+  }
+
+  let mut d = 0;
+  let mut m = n;
+
+  while m > 0 {
+    d += 1;
+    m /= 10;
+  }
+
+  d
+}
+
+fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
+  writeln!(f, "<!DOCTYPE html>")?;
+  writeln!(f, "<html>")?;
+  writeln!(f, "<head>")?;
+  writeln!(f, "<meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>")?;
+  writeln!(f, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>")?;
+
+  match title {
+    PageTitle::Index => {
+      writeln!(f, "<title>Repositories</title>")?;
+    }
+    PageTitle::Summary { repo_name }=> {
+      writeln!(f, "<title>{repo}</title>", repo = Escaped(repo_name))?;
+    }
+    PageTitle::TreeEntry { repo_name, path } => {
+      writeln!(f, "<title>/{repo} at {path}</title>",
+                  repo = Escaped(repo_name),
+                  path = Escaped(&path.to_string_lossy()))?;
+    }
+    PageTitle::Log { repo_name }=> {
+      writeln!(f, "<title>{repo} log</title>", repo = Escaped(repo_name))?;
+    }
+    PageTitle::Commit { repo_name, summary } => {
+      writeln!(f, "<title>{repo}: {summary}</title>",
+                  repo = Escaped(repo_name),
+                  summary = Escaped(summary.trim()))?;
+    }
+    PageTitle::License { repo_name } => {
+      writeln!(f, "<title>{repo} license</title>", repo = Escaped(repo_name))?;
+    }
+  }
+
+  writeln!(f, "<link rel=\"icon\" type=\"image/svg\" href=\"/favicon.svg\" />")?;
+  writeln!(f, "<link rel=\"stylesheet\" type=\"text/css\" href=\"/styles.css\" />")?;
+  writeln!(f, "</head>")?;
+  writeln!(f, "<body>")?;
+  writeln!(f, "<header>")?;
+  writeln!(f, "<nav>")?;
+  writeln!(f, "<a href=\"/index.html\">")?;
+  writeln!(f, "<img aria-hidden=\"true\" alt=\"Website logo\" src=\"/favicon.svg\">")?;
+  writeln!(f, "git.pablopie.xyz")?;
+  writeln!(f, "</a>")?;
+  writeln!(f, "</nav>")?;
+  writeln!(f, "</header>")?;
+
+  Ok(())
+}
+
+fn render_footer(f: &mut File) -> io::Result<()> {
+  writeln!(f, "<footer>")?;
+  writeln!(f, "made with ❤️ by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
+  writeln!(f, "</footer>")
+}
+
+fn render_index(repos: &[RepoInfo]) -> io::Result<()> {
+  let mut path = PathBuf::from(OUTPUT_PATH);
+  path.push("index.html");
+
+  let mut f = match File::create(&path) {
+    Ok(f)  => f,
+    Err(e) => {
+      errorln!("Failed to create {path:?}: {e}");
+      return Err(e);
+    }
+  };
+
+  // ==========================================================================
+  render_header(&mut f, PageTitle::Index)?;
+  writeln!(&mut f, "<main>")?;
+  writeln!(&mut f, "<div class=\"article-list\">")?;
+
+  for repo in repos {
+    writeln!(&mut f, "<article>")?;
+
+    writeln!(&mut f, "<h4>")?;
+    writeln!(&mut f, "<a href=\"/{repo}/index.html\">{repo}</a>",
+                     repo = Escaped(&repo.name))?;
+    writeln!(&mut f, "</h4>")?;
+
+    writeln!(&mut f, "<div>")?;
+    writeln!(&mut f, "<span>{owner}</span>", owner = Escaped(&repo.owner))?;
+    if let Some(date) = repo.last_commit {
+      writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
+                       datetime  = DateTime(date), date = Date(date))?;
+    }
+    writeln!(&mut f, "</div>")?;
+
+    if let Some(ref description) = repo.description {
+      for p in description.trim().split("\n\n") {
+        writeln!(&mut f, "<p>\n{p}\n</p>", p = p.trim())?;
+      }
+    }
+
+    writeln!(&mut f, "</article>")?;
+  }
+
+  writeln!(&mut f, "</div>")?;
+  writeln!(&mut f, "</main>")?;
+  render_footer(&mut f)?;
+  writeln!(&mut f, "</body>")?;
+  writeln!(&mut f, "</html>")?;
+
+  Ok(())
+}
+
+fn main() -> Result<(), ()> {
+  const REPOS_PATH: &str = "./test";
+  let repos = RepoInfo::from_dir(REPOS_PATH)?;
+
+  info!("Updating global repository index...");
+  render_index(&repos).map_err(|_| ())?;
+  info_done!();
+
+  for repo in repos {
+    info!("Updating pages for {name:?}...", name = repo.name);
+    let renderer = RepoRenderer::try_from(repo)?;
+    renderer.render().map_err(|_| ())?;
+    info_done!();
+  }
+
+  Ok(())
 }
