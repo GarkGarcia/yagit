@@ -124,50 +124,11 @@ macro_rules! warnln {
     });
 }
 
-#[macro_export]
-macro_rules! usage {
-    ($program:expr) => {
-        let mut stderr = io::stderr();
-        let _ = writeln!(
-            stderr,
-            "{usage_header_msg} {} config.yml [--full-build]",
-            $program,
-            usage_header_msg = "[USAGE]".yellow().bold()
-        );
-    };
-}
-
-#[macro_export]
-macro_rules! usage_config {
-    () => {
-        let mut stderr = io::stderr();
-
-        let _ = writeln!(
-            stderr,
-            "{usage_header_msg} The YAML configuration file should look like this:",
-            usage_header_msg = "[USAGE]".yellow().bold()
-        );
-        let _ = writeln!(
-            stderr,
-            "    - {path_attr} examples/photos/iss-trails.jpg
-      {alt_attr} \"A long exposure shot of star trails, framed by the ISS on the top and
-        by the surface of Earth on the bottom. Thunderstorms dot the landscape
-        while the orange glare of cities drifts across Earth and a faint a
-        green-yellow light hugs the horizon.\"
-      {license_attr} PD
-      {author_attr} Don Pettit
-
-    - {path_attr} examples/photos/solar-eclipse.jpg
-      {alt_attr} \"A total solar eclipse. The moon blocks out the sun and creates a
-      stunning ring of colorful red light against the black background.\"
-      {license_attr} CC-BY-SA-3
-      {author_attr} Luc Viatour",
-            path_attr = "path:".green(),
-            alt_attr = "alt:".green(),
-            author_attr = "author:".green(),
-            license_attr = "license:".green()
-        );
-
-        let _ = stderr.flush();
-    }
+pub fn usage(program_name: &str) {
+  let mut stderr = io::stderr();
+  let _ = writeln!(
+    stderr,
+      "{usage_header_msg} {program_name} render       REPO_PATH  OUTPUT_PATH\n{usage_header_msg} {program_name} render-batch BATCH_PATH OUTPUT_PATH",
+      usage_header_msg = "[USAGE]".yellow().bold()
+  );
 }

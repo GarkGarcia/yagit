@@ -7,6 +7,8 @@ use std::{
   ffi::OsStr,
   collections::HashMap,
   time::{Duration, SystemTime},
+  env,
+  process::ExitCode,
 };
 use git2::{
   Repository,
@@ -28,8 +30,6 @@ mod log;
 
 mod markdown;
 mod time;
-
-const OUTPUT_PATH: &str = "./site";
 
 const TREE_SUBDIR:   &str = "tree";
 const BLOB_SUBDIR:   &str = "blob";
@@ -97,7 +97,9 @@ impl RepoInfo {
     let repo = match Repository::open(&path) {
       Ok(repo) => repo,
       Err(e)   => {
-        errorln!("Could not open repository at {:?}: {e}", path);
+        // TODO: improve the error message here?
+        errorln!("Could not open repository at {:?}: {err}", path,
+                 err = e.message());
         return Err(());
       }
     };
@@ -188,7 +190,7 @@ struct Readme {
 }
 
 impl RepoInfo {
-  fn from_dir<P>(path: P) -> Result<Vec<Self>, ()>
+  fn from_batch_path<P>(path: P) -> Result<Vec<Self>, ()>
   where
     P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
   {
@@ -221,18 +223,113 @@ impl RepoInfo {
 }
 
 struct RepoRenderer<'repo> {
-  pub name: String,
+  pub name:        String,
   pub description: Option<String>,
 
-  pub repo: Repository,
-  pub head: Tree<'repo>,
+  pub repo:   Repository,
+  pub head:   Tree<'repo>,
   pub branch: String,
 
-  pub readme: Option<Readme>,
+  pub readme:  Option<Readme>,
   pub license: Option<String>,
+
+  pub output_path: PathBuf,
 }
 
 impl<'repo> RepoRenderer<'repo> {
+  fn new<P>(repo: RepoInfo, output_path: P) -> Result<Self, ()>
+  where
+    P: AsRef<Path> + AsRef<OsStr>,
+  {
+    let (head, branch) = {
+      match repo.repo.head() {
+        Ok(head) => unsafe {
+          let branch = head
+            .shorthand()
+            .expect("should be able to get HEAD shorthand")
+            .to_string();
+
+          let head = mem::transmute::<&Tree<'_>, &Tree<'repo>>(
+            &head.peel_to_tree().unwrap()
+          );
+
+          (head.clone(), branch)
+        }
+        Err(e) => {
+          errorln!("Could not retrieve HEAD of {name:?}: {e}",
+                   name = repo.name);
+          return Err(());
+        }
+      }
+    };
+
+    let mut readme = None;
+    let mut license = None;
+    for entry in head.iter() {
+      if let (Some(ObjectType::Blob), Some(name)) =
+             (entry.kind(), entry.name()) {
+        if README_NAMES.contains(&name) {
+          if let Some(Readme { path: ref old_path, .. }) = readme {
+            warnln!("Multiple README files encountered: {old_path:?} and {name:?}. Ignoring {name:?}");
+            continue;
+          }
+
+          let blob = entry
+            .to_object(&repo.repo)
+            .unwrap()
+            .peel_to_blob()
+            .unwrap();
+
+          if blob.is_binary() {
+            warnln!("README file {name:?} is binary. Ignoring {name:?}");
+            continue;
+          }
+
+          let content = std::str::from_utf8(blob.content())
+            .expect("README contents should be UTF-8")
+            .to_string();
+
+          let format = if name == "README.md" {
+            ReadmeFormat::Md
+          } else {
+            ReadmeFormat::Txt
+          };
+
+          readme = Some(Readme { content, path: name.to_string(), format, });
+        } else if name == LICENSE_NAME {
+          let blob = entry
+            .to_object(&repo.repo)
+            .unwrap()
+            .peel_to_blob()
+            .unwrap();
+
+          if blob.is_binary() {
+            warnln!("LICENSE file is binary. Ignoring it");
+            continue;
+          }
+
+          let content = std::str::from_utf8(blob.content())
+            .expect("README contents should be UTF-8")
+            .to_string();
+
+          // TODO: parse the license from content?
+          license = Some(content);
+        }
+      }
+    }
+
+    Ok(Self {
+      name: repo.name,
+      head,
+      branch,
+      description: repo.description,
+      repo: repo.repo,
+      readme,
+      license,
+      output_path: PathBuf::from(&output_path),
+    })
+  }
+
   pub fn render(&self) -> io::Result<()> {
     self.render_summary()?;
     let last_commit_time = self.render_log()?;
@@ -312,7 +409,7 @@ impl<'repo> RepoRenderer<'repo> {
     tree_stack: &mut Vec<(Tree<'repo>, PathBuf)>,
     blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf)>,
   ) -> io::Result<()> {
-    let mut blobs_path = PathBuf::from(OUTPUT_PATH);
+    let mut blobs_path = self.output_path.clone();
     blobs_path.push(&self.name);
     blobs_path.push(BLOB_SUBDIR);
     blobs_path.extend(&parent);
@@ -321,7 +418,7 @@ impl<'repo> RepoRenderer<'repo> {
       fs::create_dir(&blobs_path)?;
     }
 
-    let mut index_path = PathBuf::from(OUTPUT_PATH);
+    let mut index_path = self.output_path.clone();
     index_path.push(&self.name);
     index_path.push(TREE_SUBDIR);
     index_path.extend(&parent);
@@ -371,7 +468,7 @@ impl<'repo> RepoRenderer<'repo> {
             .peel_to_blob()
             .unwrap();
 
-          let mut blob_path = PathBuf::from(OUTPUT_PATH);
+          let mut blob_path = self.output_path.clone();
           blob_path.push(&self.name);
           blob_path.push(BLOB_SUBDIR);
           blob_path.extend(&path);
@@ -467,7 +564,7 @@ impl<'repo> RepoRenderer<'repo> {
     path: PathBuf,
     last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
-    let mut page_path = PathBuf::from(OUTPUT_PATH);
+    let mut page_path = self.output_path.clone();
     page_path.push(&self.name);
     page_path.push(TREE_SUBDIR);
     page_path.extend(&path);
@@ -574,7 +671,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     // ========================================================================
-    let mut index_path = PathBuf::from(OUTPUT_PATH);
+    let mut index_path = self.output_path.clone();
     index_path.push(&self.name);
     index_path.push(COMMIT_SUBDIR);
 
@@ -737,7 +834,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     // ========================================================================
-    let mut path = PathBuf::from(OUTPUT_PATH);
+    let mut path = self.output_path.clone();
     path.push(&self.name);
     path.push(COMMIT_SUBDIR);
     path.push(format!("{}.html", commit.id()));
@@ -982,7 +1079,7 @@ impl<'repo> RepoRenderer<'repo> {
   }
 
   fn render_summary(&self) -> io::Result<()> {
-    let mut path = PathBuf::from(OUTPUT_PATH);
+    let mut path = self.output_path.clone();
     path.push(&self.name);
 
     fs::create_dir_all(&path)?;
@@ -1029,7 +1126,7 @@ impl<'repo> RepoRenderer<'repo> {
   }
 
   pub fn render_license(&self, license: &str) -> io::Result<()> {
-    let mut path = PathBuf::from(OUTPUT_PATH);
+    let mut path = self.output_path.clone();
     path.push(&self.name);
     path.push("license.html");
 
@@ -1053,99 +1150,6 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</html>")?;
 
     Ok(())
-  }
-}
-
-impl<'repo> TryFrom<RepoInfo> for RepoRenderer<'repo> {
-  type Error = ();
-
-  fn try_from(repo: RepoInfo) -> Result<Self, Self::Error> {
-    let (head, branch) = {
-      match repo.repo.head() {
-        Ok(head) => unsafe {
-          let branch = head
-            .shorthand()
-            .expect("should be able to get HEAD shorthand")
-            .to_string();
-
-          let head = mem::transmute::<&Tree<'_>, &Tree<'repo>>(
-            &head.peel_to_tree().unwrap()
-          );
-
-          (head.clone(), branch)
-        }
-        Err(e) => {
-          errorln!("Could not retrieve HEAD of {name:?}: {e}",
-                   name = repo.name);
-          return Err(());
-        }
-      }
-    };
-
-    let mut readme = None;
-    let mut license = None;
-    for entry in head.iter() {
-      if let (Some(ObjectType::Blob), Some(name)) =
-             (entry.kind(), entry.name()) {
-        if README_NAMES.contains(&name) {
-          if let Some(Readme { path: ref old_path, .. }) = readme {
-            warnln!("Multiple README files encountered: {old_path:?} and {name:?}. Ignoring {name:?}");
-            continue;
-          }
-
-          let blob = entry
-            .to_object(&repo.repo)
-            .unwrap()
-            .peel_to_blob()
-            .unwrap();
-
-          if blob.is_binary() {
-            warnln!("README file {name:?} is binary. Ignoring {name:?}");
-            continue;
-          }
-
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
-
-          let format = if name == "README.md" {
-            ReadmeFormat::Md
-          } else {
-            ReadmeFormat::Txt
-          };
-
-          readme = Some(Readme { content, path: name.to_string(), format, });
-        } else if name == LICENSE_NAME {
-          let blob = entry
-            .to_object(&repo.repo)
-            .unwrap()
-            .peel_to_blob()
-            .unwrap();
-
-          if blob.is_binary() {
-            warnln!("LICENSE file is binary. Ignoring it");
-            continue;
-          }
-
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
-
-          // TODO: parse the license from content?
-          license = Some(content);
-        }
-      }
-    }
-
-    Ok(Self {
-      name: repo.name,
-      head,
-      branch,
-      description: repo.description,
-      repo: repo.repo,
-      readme,
-      license,
-    })
   }
 }
 
@@ -1320,8 +1324,11 @@ fn render_footer(f: &mut File) -> io::Result<()> {
   writeln!(f, "</footer>")
 }
 
-fn render_index(repos: &[RepoInfo]) -> io::Result<()> {
-  let mut path = PathBuf::from(OUTPUT_PATH);
+fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
+  output_path: P,
+  repos: &[RepoInfo],
+) -> io::Result<()> {
+  let mut path = PathBuf::from(&output_path);
   path.push("index.html");
 
   let mut f = match File::create(&path) {
@@ -1371,20 +1378,181 @@ fn render_index(repos: &[RepoInfo]) -> io::Result<()> {
   Ok(())
 }
 
-fn main() -> Result<(), ()> {
-  const REPOS_PATH: &str = "./test";
-  let repos = RepoInfo::from_dir(REPOS_PATH)?;
+#[derive(Clone, Debug)]
+enum SubCommand {
+  RenderBatch {
+    batch_path: String,
+    output_path: String,
+  },
+  Render {
+    repo_path: String,
+    output_path: String,
+  },
+}
 
-  info!("Updating global repository index...");
-  render_index(&repos).map_err(|_| ())?;
-  info_done!();
+impl SubCommand {
+  pub fn parse() -> Result<Self, ()> {
+    let mut args = env::args();
 
-  for repo in repos {
-    info!("Updating pages for {name:?}...", name = repo.name);
-    let renderer = RepoRenderer::try_from(repo)?;
-    renderer.render().map_err(|_| ())?;
-    info_done!();
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Tag {
+      RenderBatch,
+      Render,
+    }
+
+    let program_name = args.next().unwrap();
+
+    let tag = match args.next() {
+      Some(s) if s == "render-batch" => Tag::RenderBatch,
+      Some(s) if s == "render"       => Tag::Render,
+      Some(s) => {
+        errorln!("Unknown subcommand {s:?}");
+        log::usage(&program_name);
+        return Err(());
+      }
+      None => {
+        errorln!("No subcommand provided");
+        log::usage(&program_name);
+        return Err(());
+      }
+    };
+
+    let mut input_path = if let Some(dir) = args.next() {
+      dir
+    } else {
+      errorln!("No input path provided");
+      log::usage(&program_name);
+      return Err(());
+    };
+
+    if tag == Tag::Render {
+      // input_path should be an absolute path because we later want to extract
+      // the parent and file name
+      input_path = match fs::canonicalize(&input_path) {
+        Ok(path) => path.to_string_lossy().to_string(),
+        Err(e) => {
+          errorln!("Could not extract absolute path from {input_path:?}: {e}");
+          return Err(());
+        }
+      };
+    }
+
+    let output_path = if let Some(dir) = args.next() {
+      dir
+    } else {
+      // TODO: make this message better
+      // TODO: print USAGE
+      errorln!("No output path provided");
+      log::usage(&program_name);
+      return Err(());
+    };
+
+    if args.next().is_some() {
+      warnln!("Additional command line arguments provided. Ignoring trailing arguments...");
+      log::usage(&program_name);
+    }
+
+    match tag {
+      Tag::RenderBatch => Ok(
+        Self::RenderBatch { batch_path: input_path, output_path, }
+      ),
+      Tag::Render => Ok(
+        Self::Render { repo_path: input_path, output_path, }
+      ),
+    }
+  }
+}
+
+fn main() -> ExitCode {
+  let cmd = if let Ok(cmd) = SubCommand::parse() {
+    cmd
+  } else {
+    return ExitCode::FAILURE;
+  };
+
+  match cmd {
+    SubCommand::RenderBatch { batch_path, output_path } => {
+      let repos = if let Ok(rs) = RepoInfo::from_batch_path(&batch_path) {
+        rs
+      } else {
+        return ExitCode::FAILURE;
+      };
+
+      info!("Updating global repository index...");
+      if let Err(e) = render_index(&output_path, &repos) {
+        errorln!("Failed rendering global repository index: {e}");
+      }
+      info_done!();
+
+      for repo in repos {
+        info!("Updating pages for {name:?}...", name = repo.name);
+
+        let renderer = if let Ok(r) = RepoRenderer::new(repo, &output_path) {
+          r
+        } else {
+          return ExitCode::FAILURE;
+        };
+
+        if let Err(e) = renderer.render() {
+          errorln!("Failed rendering pages for {name:?}: {e}",
+                   name = renderer.name);
+        }
+
+        info_done!();
+      }
+    }
+    SubCommand::Render { repo_path, output_path } => {
+      let repo_path = Path::new(&repo_path);
+
+      // TODO: get absolute path beforehand?
+      let parent_path = if let Some(parent) = repo_path.parent() {
+        parent
+      } else {
+        errorln!("Could not extract parent path from {repo_path:?}");
+        return ExitCode::FAILURE;
+      };
+
+      let repo_name = if let Some(name) = repo_path.file_name() {
+        name
+      } else {
+        errorln!("Could not extract repository name from {repo_path:?}");
+        return ExitCode::FAILURE;
+      };
+
+      let repos = if let Ok(rs) = RepoInfo::from_batch_path(parent_path) {
+        rs
+      } else {
+        return ExitCode::FAILURE;
+      };
+
+      info!("Updating global repository index...");
+      if let Err(e) = render_index(&output_path, &repos) {
+        errorln!("Failed rendering global repository index: {e}");
+      }
+      info_done!();
+
+      for repo in repos {
+        if *repo.name != *repo_name {
+          continue;
+        }
+
+        info!("Updating pages for {name:?}...", name = repo.name);
+
+        let renderer = if let Ok(r) = RepoRenderer::new(repo, &output_path) {
+          r
+        } else {
+          return ExitCode::FAILURE;
+        };
+
+        if let Err(e) = renderer.render() {
+          errorln!("Failed rendering pages for {name:?}: {e}",
+                   name = renderer.name);
+        }
+
+        info_done!();
+      }
+    }
   }
 
-  Ok(())
+  ExitCode::SUCCESS
 }
