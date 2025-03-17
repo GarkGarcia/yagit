@@ -31,6 +31,9 @@ mod log;
 mod markdown;
 mod time;
 
+#[cfg(not(debug_assertions))]
+const GIT_USER: &str = "git";
+
 const TREE_SUBDIR:   &str = "tree";
 const BLOB_SUBDIR:   &str = "blob";
 const COMMIT_SUBDIR: &str = "commit";
@@ -1391,7 +1394,7 @@ enum SubCommand {
 }
 
 impl SubCommand {
-  pub fn parse() -> Result<Self, ()> {
+  pub fn parse() -> Result<(Self, String), ()> {
     let mut args = env::args();
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1453,22 +1456,41 @@ impl SubCommand {
     }
 
     match tag {
-      Tag::RenderBatch => Ok(
-        Self::RenderBatch { batch_path: input_path, output_path, }
-      ),
-      Tag::Render => Ok(
-        Self::Render { repo_path: input_path, output_path, }
-      ),
+      Tag::RenderBatch => Ok((
+        Self::RenderBatch { batch_path: input_path, output_path, },
+        program_name
+      )),
+      Tag::Render => Ok((
+        Self::Render { repo_path: input_path, output_path, },
+        program_name
+      )),
     }
   }
 }
 
 fn main() -> ExitCode {
-  let cmd = if let Ok(cmd) = SubCommand::parse() {
+  #[allow(unused_variables)]
+  let (cmd, program_name) = if let Ok(cmd) = SubCommand::parse() {
     cmd
   } else {
     return ExitCode::FAILURE;
   };
+
+  #[cfg(not(debug_assertions))]
+  unsafe {
+    use std::ffi::CStr;
+
+    let uid = libc::getuid();
+    let pw = libc::getpwuid(uid);
+    if !pw.is_null() {
+      let user = CStr::from_ptr((*pw).pw_name).to_string_lossy();
+
+      if user != GIT_USER {
+        errorln!("Running {program_name} as the {user:?} user. Re-run as {GIT_USER:?}");
+        return ExitCode::FAILURE;
+      }
+    }
+  }
 
   match cmd {
     SubCommand::RenderBatch { batch_path, output_path } => {
