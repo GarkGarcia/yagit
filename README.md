@@ -44,3 +44,17 @@ $ yagit render-batch BATCH_PATH OUTPUT_PATH
 yagit will generate the HTML pages for `BATCH_PATH/REPO_NAME` at
 `OUTPUT_PATH/REPO_NAME`, as well as an index of all git repositories in
 `BATCH_PATH` at `OUTPUT_PATH/index.html`.
+
+## Installation
+
+yagit can be installed via Cargo by cloning this repository, as in:
+
+```console
+$ git clone git://git.pablopie.xyz/yagit
+$ cargo install --path ./yagit
+```
+
+### Build Dependencies
+
+* [libgit2](https://libgit2.org)
+* [libssl](https://www.openssl-library.org)
