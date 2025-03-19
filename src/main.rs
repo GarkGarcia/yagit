@@ -252,18 +252,11 @@ struct RepoRenderer<'repo> {
 
   pub readme:      Option<Readme>,
   pub license:     Option<String>,
-  pub last_commit: Option<SystemTime>,
 
   pub full_build:  bool,
   pub output_root: &'repo RootPath,
   pub output_path: PathBuf,
 
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum RenderResult {
-  Rendered,
-  Skipped,
 }
 
 impl<'repo> RepoRenderer<'repo> {
@@ -353,10 +346,6 @@ impl<'repo> RepoRenderer<'repo> {
       }
     }
 
-    let last_commit = repo.last_commit.map(|t| {
-      SystemTime::UNIX_EPOCH + Duration::from_secs(t.seconds() as u64)
-    });
-
     Ok(Self {
       name: repo.name,
       head,
@@ -366,32 +355,12 @@ impl<'repo> RepoRenderer<'repo> {
       readme,
       license,
       output_path: PathBuf::from(&output_path),
-      last_commit,
       full_build,
       output_root,
     })
   }
 
-  pub fn render(&self) -> io::Result<RenderResult> {
-    // skip rendering the repo if the last modification of its pages is
-    // older than the last commit
-    if !self.full_build {
-      if let Some(repo_last_commit) = self.last_commit {
-        let mut repo_output_path = PathBuf::from(&self.output_path);
-        repo_output_path.push(&self.name);
-
-        // TODO: this is incorrect: meta.modified() gives us the date the
-        // directory was created at, not the date it was last updated
-        if let Ok(meta) = fs::metadata(&repo_output_path) {
-          let output_last_modified = meta.modified().unwrap();
-
-          if output_last_modified > repo_last_commit {
-            return Ok(RenderResult::Skipped);
-          }
-        }
-      }
-    }
-
+  pub fn render(&self) -> io::Result<()> {
     self.render_summary()?;
     let last_commit_time = self.render_log()?;
     if let Some(ref license) = self.license {
@@ -399,7 +368,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
     self.render_tree(&last_commit_time)?;
 
-    Ok(RenderResult::Rendered)
+    Ok(())
   }
 
   /// Prints the HTML preamble
@@ -1632,14 +1601,12 @@ fn main() -> ExitCode {
           return ExitCode::FAILURE;
         };
 
-        match renderer.render() {
-          Ok(RenderResult::Rendered) => info_done!(),
-          Ok(RenderResult::Skipped)  => info_done!("skipped"),
-          Err(e) => {
-            errorln!("Failed rendering pages for {name:?}: {e}",
-                     name = renderer.name);
-          }
+        if let Err(e) = renderer.render() {
+          errorln!("Failed rendering pages for {name:?}: {e}",
+                   name = renderer.name);
+          return ExitCode::FAILURE;
         }
+        info_done!();
 
       }
     }
