@@ -1022,16 +1022,12 @@ impl<'repo> RepoRenderer<'repo> {
               Delta::Modified => {
                 let origin_type = line.origin_value();
                 if matches!(origin_type,
-                            DiffLineType::Addition |
-                            DiffLineType::AddEOFNL |
-                            DiffLineType::Deletion |
-                            DiffLineType::DeleteEOFNL) {
-
+                            DiffLineType::Addition | DiffLineType::Deletion) {
                   let (origin, class, lineno) = match origin_type {
-                    DiffLineType::Addition | DiffLineType::AddEOFNL => {
+                    DiffLineType::Addition => {
                       ('+', "i", line.new_lineno().unwrap())
                     }
-                    DiffLineType::Deletion | DiffLineType::DeleteEOFNL => {
+                    DiffLineType::Deletion => {
                       ('-', "d", line.old_lineno().unwrap())
                     }
                     _ => unreachable!(),
