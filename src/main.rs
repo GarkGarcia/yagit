@@ -177,22 +177,7 @@ impl RepoInfo {
       last_commit,
     })
   }
-}
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ReadmeFormat {
-  Txt,
-  Md,
-}
-
-#[derive(Clone, Debug)]
-struct Readme {
-  content: String,
-  path:    String,
-  format:  ReadmeFormat,
-}
-
-impl RepoInfo {
   fn from_batch_path<P>(path: P) -> Result<Vec<Self>, ()>
   where
     P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
@@ -225,6 +210,19 @@ impl RepoInfo {
   }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReadmeFormat {
+  Txt,
+  Md,
+}
+
+#[derive(Clone, Debug)]
+struct Readme {
+  content: String,
+  path:    String,
+  format:  ReadmeFormat,
+}
+
 struct RepoRenderer<'repo> {
   pub name:        String,
   pub description: Option<String>,
@@ -233,10 +231,18 @@ struct RepoRenderer<'repo> {
   pub head:   Tree<'repo>,
   pub branch: String,
 
-  pub readme:  Option<Readme>,
-  pub license: Option<String>,
+  pub readme:      Option<Readme>,
+  pub license:     Option<String>,
+  pub last_commit: Option<SystemTime>,
 
   pub output_path: PathBuf,
+
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenderResult {
+  Rendered,
+  Skipped,
 }
 
 impl<'repo> RepoRenderer<'repo> {
@@ -321,6 +327,10 @@ impl<'repo> RepoRenderer<'repo> {
       }
     }
 
+    let last_commit = repo.last_commit.map(|t| {
+      SystemTime::UNIX_EPOCH + Duration::from_secs(t.seconds() as u64)
+    });
+
     Ok(Self {
       name: repo.name,
       head,
@@ -330,10 +340,28 @@ impl<'repo> RepoRenderer<'repo> {
       readme,
       license,
       output_path: PathBuf::from(&output_path),
+      last_commit,
     })
   }
 
-  pub fn render(&self) -> io::Result<()> {
+  pub fn render(&self) -> io::Result<RenderResult> {
+    // TODO: [feature]: disable this via a flag
+    // skip rendering the repo if the last modification of its pages is
+    // older than the last commit
+    if let Some(repo_last_commit) = self.last_commit {
+      let mut repo_output_path = PathBuf::from(&self.output_path);
+      repo_output_path.push(&self.name);
+
+      if let Ok(meta) = fs::metadata(&repo_output_path) {
+        let output_last_modified = meta.modified().unwrap();
+
+        if output_last_modified > repo_last_commit {
+          return Ok(RenderResult::Skipped);
+        }
+      }
+    }
+
+
     self.render_summary()?;
     let last_commit_time = self.render_log()?;
     if let Some(ref license) = self.license {
@@ -341,7 +369,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
     self.render_tree(&last_commit_time)?;
 
-    Ok(())
+    Ok(RenderResult::Rendered)
   }
 
   /// Prints the HTML preamble
@@ -1513,12 +1541,15 @@ fn main() -> ExitCode {
           return ExitCode::FAILURE;
         };
 
-        if let Err(e) = renderer.render() {
-          errorln!("Failed rendering pages for {name:?}: {e}",
-                   name = renderer.name);
+        match renderer.render() {
+          Ok(RenderResult::Rendered) => info_done!(),
+          Ok(RenderResult::Skipped)  => info_done!("skipped"),
+          Err(e) => {
+            errorln!("Failed rendering pages for {name:?}: {e}",
+                     name = renderer.name);
+          }
         }
 
-        info_done!();
       }
     }
     SubCommand::Render { repo_path, output_path } => {
