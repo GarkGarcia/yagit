@@ -99,10 +99,8 @@ impl RepoInfo {
   {
     let repo = match Repository::open(&path) {
       Ok(repo) => repo,
-      Err(e)   => {
-        // TODO: improve the error message here?
-        errorln!("Could not open repository at {:?}: {err}", path,
-                 err = e.message());
+      Err(_)   => {
+        errorln!("Could not open repository at {path:?}");
         return Err(());
       }
     };
@@ -340,7 +338,7 @@ impl<'repo> RepoRenderer<'repo> {
             .expect("README contents should be UTF-8")
             .to_string();
 
-          // TODO: parse the license from content?
+          // TODO: [feature]: parse the license from content?
           license = Some(content);
         }
       }
@@ -651,7 +649,7 @@ impl<'repo> RepoRenderer<'repo> {
                      root = self.output_root,
                      name = Escaped(&self.name),
                      path = Escaped(&path.to_string_lossy()))?;
-    // TODO: print the size differently for larger blobs?
+    // TODO: [feature]: print the size differently for larger blobs?
     writeln!(&mut f, "<td align=\"right\">{}B</td>", blob.size())?;
     writeln!(&mut f, "<td align=\"right\">{}</td>", mode)?;
     writeln!(&mut f, "</tr>")?;
@@ -1462,7 +1460,8 @@ impl Cmd {
         Some(arg) if arg == "render-batch" => break CmdTag::RenderBatch,
         Some(arg) if arg == "render"       => break CmdTag::Render,
 
-        Some(arg) if arg == "-B" => {
+        // TODO: documment these flags
+        Some(arg) if arg == "--full-build" => {
           full_build = true;
         }
         Some(arg) if arg == "--output-root" => {
@@ -1499,7 +1498,6 @@ impl Cmd {
     let output_path = if let Some(dir) = args.next() {
       dir
     } else {
-      // TODO: make this message better
       errorln!("No output path provided");
       log::usage(&program_name);
       return Err(());
