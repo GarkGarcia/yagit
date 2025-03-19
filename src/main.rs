@@ -223,6 +223,25 @@ struct Readme {
   format:  ReadmeFormat,
 }
 
+#[derive(Debug, Clone)]
+// this is necessary for pages to link to the correct addresses when rendering
+// private repos
+/// A path describing the root in the output directory tree
+enum RootPath {
+  Slash,
+  Path(String),
+}
+
+impl Display for RootPath {
+  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    if let Self::Path(p) = self {
+      write!(f, "/{}", Escaped(p.trim_matches('/')))?;
+    }
+
+    Ok(())
+  }
+}
+
 struct RepoRenderer<'repo> {
   pub name:        String,
   pub description: Option<String>,
@@ -235,6 +254,8 @@ struct RepoRenderer<'repo> {
   pub license:     Option<String>,
   pub last_commit: Option<SystemTime>,
 
+  pub full_build:  bool,
+  pub output_root: &'repo RootPath,
   pub output_path: PathBuf,
 
 }
@@ -246,7 +267,12 @@ enum RenderResult {
 }
 
 impl<'repo> RepoRenderer<'repo> {
-  fn new<P>(repo: RepoInfo, output_path: P) -> Result<Self, ()>
+  fn new<P>(
+    repo: RepoInfo,
+    output_path: P,
+    full_build: bool,
+    output_root: &'repo RootPath,
+  ) -> Result<Self, ()>
   where
     P: AsRef<Path> + AsRef<OsStr>,
   {
@@ -341,26 +367,30 @@ impl<'repo> RepoRenderer<'repo> {
       license,
       output_path: PathBuf::from(&output_path),
       last_commit,
+      full_build,
+      output_root,
     })
   }
 
   pub fn render(&self) -> io::Result<RenderResult> {
-    // TODO: [feature]: disable this via a flag
     // skip rendering the repo if the last modification of its pages is
     // older than the last commit
-    if let Some(repo_last_commit) = self.last_commit {
-      let mut repo_output_path = PathBuf::from(&self.output_path);
-      repo_output_path.push(&self.name);
+    if !self.full_build {
+      if let Some(repo_last_commit) = self.last_commit {
+        let mut repo_output_path = PathBuf::from(&self.output_path);
+        repo_output_path.push(&self.name);
 
-      if let Ok(meta) = fs::metadata(&repo_output_path) {
-        let output_last_modified = meta.modified().unwrap();
+        // TODO: this is incorrect: meta.modified() gives us the date the
+        // directory was created at, not the date it was last updated
+        if let Ok(meta) = fs::metadata(&repo_output_path) {
+          let output_last_modified = meta.modified().unwrap();
 
-        if output_last_modified > repo_last_commit {
-          return Ok(RenderResult::Skipped);
+          if output_last_modified > repo_last_commit {
+            return Ok(RenderResult::Skipped);
+          }
         }
       }
     }
-
 
     self.render_summary()?;
     let last_commit_time = self.render_log()?;
@@ -386,17 +416,21 @@ impl<'repo> RepoRenderer<'repo> {
     }
     writeln!(f, "<nav>")?;
     writeln!(f, "<ul>")?;
-    writeln!(f, "<li{class}><a href=\"/{name}/index.html\">summary</a></li>",
+    writeln!(f, "<li{class}><a href=\"{root}/{name}/index.html\">summary</a></li>",
+                root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::Summary { .. }) { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"/{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
+    writeln!(f, "<li{class}><a href=\"{root}/{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
+                root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::Log { .. } | PageTitle::Commit { .. }) { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"/{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
+    writeln!(f, "<li{class}><a href=\"{root}/{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
+                root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::TreeEntry { .. }) { " class=\"nav-selected\"" } else { "" })?;
     if self.license.is_some() {
-      writeln!(f, "<li{class}><a href=\"/{name}/license.html\">license</a></li>",
+      writeln!(f, "<li{class}><a href=\"{root}/{name}/license.html\">license</a></li>",
+                  root = self.output_root,
                   name = Escaped(&self.name),
                   class = if matches!(title, PageTitle::License { .. }) { " class=\"nav-selected\"" } else { "" })?;
     }
@@ -519,7 +553,8 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
+            "<tr><td><a href=\"{root}/{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
+            root = self.output_root,
             name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
@@ -541,7 +576,8 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"/{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
+            "<tr><td><a href=\"{root}/{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
+            root = self.output_root,
             name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
@@ -601,13 +637,14 @@ impl<'repo> RepoRenderer<'repo> {
     page_path.extend(&path);
     let page_path = format!("{}.html", page_path.to_string_lossy());
 
-    // TODO: [feature]: disable this via a flag
     // skip rendering the page if the commit the blob was last updated on is
     // older than the page
-    if let Ok(meta) = fs::metadata(&page_path) {
-      let last_modified = meta.modified().unwrap();
-      if last_modified > last_commit_time[&blob.id()] {
-        return Ok(());
+    if !self.full_build {
+      if let Ok(meta) = fs::metadata(&page_path) {
+        let last_modified = meta.modified().unwrap();
+        if last_modified > last_commit_time[&blob.id()] {
+          return Ok(());
+        }
       }
     }
 
@@ -641,7 +678,8 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"/{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
+    writeln!(&mut f, "<td><a href=\"{root}/{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
+                     root = self.output_root,
                      name = Escaped(&self.name),
                      path = Escaped(&path.to_string_lossy()))?;
     // TODO: print the size differently for larger blobs?
@@ -741,8 +779,12 @@ impl<'repo> RepoRenderer<'repo> {
 
       writeln!(&mut f, "<article>")?;
       writeln!(&mut f, "<div>")?;
-      writeln!(&mut f, "<span class=\"commit-heading\"><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
-                       name = Escaped(&self.name))?;
+      writeln!(
+        &mut f,
+        "<span class=\"commit-heading\"><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
+        root = self.output_root,
+        name = Escaped(&self.name),
+      )?;
       writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
                        datetime  = DateTime(time), date = Date(time))?;
       writeln!(&mut f, "</div>")?;
@@ -870,9 +912,8 @@ impl<'repo> RepoRenderer<'repo> {
     path.push(COMMIT_SUBDIR);
     path.push(format!("{}.html", commit.id()));
 
-    // TODO: [feature]: add a flag to ignore this
     // skip rendering the commit page if the file already exists
-    if path.exists() {
+    if !self.full_build && path.exists() {
       return Ok(());
     }
 
@@ -897,14 +938,16 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<dl>")?;
 
     writeln!(&mut f, "<dt>Commit</dt>")?;
-    writeln!(&mut f, "<dd><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+    writeln!(&mut f, "<dd><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+                     root = self.output_root,
                      name = Escaped(&self.name), id = commit.id())?;
 
     if let Ok(ref parent) = commit.parent(0) {
       writeln!(&mut f, "<dt>Parent</dt>")?;
       writeln!(
         &mut f,
-        "<dd><a href=\"/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        "<dd><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        root = self.output_root,
         name = Escaped(&self.name),
         id = parent.id()
       )?;
@@ -1005,7 +1048,8 @@ impl<'repo> RepoRenderer<'repo> {
         Delta::Added => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git /dev/null b/<a href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git /dev/null b/<a href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            root = self.output_root,
             name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
           )?;
@@ -1020,7 +1064,8 @@ impl<'repo> RepoRenderer<'repo> {
         _ => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            root = self.output_root,
             name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
             old_path = delta_info.old_path.to_string_lossy(),
@@ -1354,6 +1399,7 @@ fn render_footer(f: &mut File) -> io::Result<()> {
 fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
   output_path: P,
   repos: &[RepoInfo],
+  output_root: &RootPath,
 ) -> io::Result<()> {
   let mut path = PathBuf::from(&output_path);
   path.push("index.html");
@@ -1375,7 +1421,8 @@ fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
     writeln!(&mut f, "<article>")?;
 
     writeln!(&mut f, "<h4>")?;
-    writeln!(&mut f, "<a href=\"/{repo}/index.html\">{repo}</a>",
+    writeln!(&mut f, "<a href=\"{root}/{repo}/index.html\">{repo}</a>",
+                     root = output_root,
                      repo = Escaped(&repo.name))?;
     writeln!(&mut f, "</h4>")?;
 
@@ -1406,45 +1453,73 @@ fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
 }
 
 #[derive(Clone, Debug)]
-enum SubCommand {
+struct Cmd {
+  sub_cmd: SubCmd,
+
+  full_build:  bool,
+  output_root: RootPath,
+}
+
+#[derive(Clone, Debug)]
+enum SubCmd {
   RenderBatch {
-    batch_path: String,
+    batch_path:  String,
     output_path: String,
   },
   Render {
-    repo_path: String,
+    repo_name:   String,
+    parent_path: String,
     output_path: String,
   },
 }
 
-impl SubCommand {
+impl Cmd {
   pub fn parse() -> Result<(Self, String), ()> {
     let mut args = env::args();
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum Tag {
+    enum CmdTag {
       RenderBatch,
       Render,
     }
 
     let program_name = args.next().unwrap();
 
-    let tag = match args.next() {
-      Some(s) if s == "render-batch" => Tag::RenderBatch,
-      Some(s) if s == "render"       => Tag::Render,
-      Some(s) => {
-        errorln!("Unknown subcommand {s:?}");
-        log::usage(&program_name);
-        return Err(());
-      }
-      None => {
-        errorln!("No subcommand provided");
-        log::usage(&program_name);
-        return Err(());
+    let mut full_build = false;
+    let mut output_root = RootPath::Slash;
+
+    let cmd = loop {
+      match args.next() {
+        Some(arg) if arg == "render-batch" => break CmdTag::RenderBatch,
+        Some(arg) if arg == "render"       => break CmdTag::Render,
+
+        Some(arg) if arg == "-B" => {
+          full_build = true;
+        }
+        Some(arg) if arg == "--output-root" => {
+          if let Some(root) = args.next() {
+            output_root = RootPath::Path(root);
+          } else {
+            errorln!("No value provided for the `--output-root` flag");
+            log::usage(&program_name);
+            return Err(());
+          }
+        }
+
+        Some(arg) => {
+          errorln!("Unknown flag {arg:?}");
+          log::usage(&program_name);
+          return Err(());
+        }
+        None => {
+          errorln!("No subcommand provided");
+          log::usage(&program_name);
+          return Err(());
+        }
       }
     };
 
-    let mut input_path = if let Some(dir) = args.next() {
+    let input_path = if let Some(dir) = args.next() {
       dir
     } else {
       errorln!("No input path provided");
@@ -1452,23 +1527,10 @@ impl SubCommand {
       return Err(());
     };
 
-    if tag == Tag::Render {
-      // input_path should be an absolute path because we later want to extract
-      // the parent and file name
-      input_path = match fs::canonicalize(&input_path) {
-        Ok(path) => path.to_string_lossy().to_string(),
-        Err(e) => {
-          errorln!("Could not extract absolute path from {input_path:?}: {e}");
-          return Err(());
-        }
-      };
-    }
-
     let output_path = if let Some(dir) = args.next() {
       dir
     } else {
       // TODO: make this message better
-      // TODO: print USAGE
       errorln!("No output path provided");
       log::usage(&program_name);
       return Err(());
@@ -1479,22 +1541,44 @@ impl SubCommand {
       log::usage(&program_name);
     }
 
-    match tag {
-      Tag::RenderBatch => Ok((
-        Self::RenderBatch { batch_path: input_path, output_path, },
-        program_name
-      )),
-      Tag::Render => Ok((
-        Self::Render { repo_path: input_path, output_path, },
-        program_name
-      )),
-    }
+    let sub_cmd = match cmd {
+      CmdTag::RenderBatch => {
+        SubCmd::RenderBatch { batch_path: input_path, output_path, }
+      }
+      CmdTag::Render => {
+        let input_abs = match fs::canonicalize(&input_path) {
+          Ok(path) => path,
+          Err(e) => {
+            errorln!("Could not extract absolute path from {input_path:?}: {e}");
+            return Err(());
+          }
+        };
+
+        let parent_path = if let Some(parent) = input_abs.parent() {
+          parent.to_string_lossy().to_string()
+        } else {
+          errorln!("Could not extract parent path from {input_path:?}");
+          return Err(());
+        };
+
+        let repo_name = if let Some(name) = input_abs.file_name() {
+          name.to_string_lossy().to_string()
+        } else {
+          errorln!("Could not extract repository name from {input_path:?}");
+          return Err(());
+        };
+
+        SubCmd::Render { parent_path, repo_name, output_path, }
+      }
+    };
+
+    Ok((Self { sub_cmd, full_build, output_root, }, program_name))
   }
 }
 
 fn main() -> ExitCode {
   #[allow(unused_variables)]
-  let (cmd, program_name) = if let Ok(cmd) = SubCommand::parse() {
+  let (cmd, program_name) = if let Ok(cmd) = Cmd::parse() {
     cmd
   } else {
     return ExitCode::FAILURE;
@@ -1516,8 +1600,8 @@ fn main() -> ExitCode {
     }
   }
 
-  match cmd {
-    SubCommand::RenderBatch { batch_path, output_path } => {
+  match cmd.sub_cmd {
+    SubCmd::RenderBatch { batch_path, output_path } => {
       let repos = if let Ok(rs) = RepoInfo::from_batch_path(&batch_path) {
         rs
       } else {
@@ -1525,7 +1609,7 @@ fn main() -> ExitCode {
       };
 
       info!("Updating global repository index...");
-      if let Err(e) = render_index(&output_path, &repos) {
+      if let Err(e) = render_index(&output_path, &repos, &cmd.output_root) {
         errorln!("Failed rendering global repository index: {e}");
       }
       info_done!();
@@ -1535,7 +1619,14 @@ fn main() -> ExitCode {
       for (i, repo) in repos.into_iter().enumerate() {
         info_count!(i + 1, n_repos; "{name}...", name = repo.name);
 
-        let renderer = if let Ok(r) = RepoRenderer::new(repo, &output_path) {
+        let renderer = RepoRenderer::new(
+          repo,
+          &output_path,
+          cmd.full_build,
+          &cmd.output_root,
+        );
+
+        let renderer = if let Ok(r) = renderer {
           r
         } else {
           return ExitCode::FAILURE;
@@ -1552,24 +1643,7 @@ fn main() -> ExitCode {
 
       }
     }
-    SubCommand::Render { repo_path, output_path } => {
-      let repo_path = Path::new(&repo_path);
-
-      // TODO: get absolute path beforehand?
-      let parent_path = if let Some(parent) = repo_path.parent() {
-        parent
-      } else {
-        errorln!("Could not extract parent path from {repo_path:?}");
-        return ExitCode::FAILURE;
-      };
-
-      let repo_name = if let Some(name) = repo_path.file_name() {
-        name
-      } else {
-        errorln!("Could not extract repository name from {repo_path:?}");
-        return ExitCode::FAILURE;
-      };
-
+    SubCmd::Render { parent_path, repo_name, output_path } => {
       let repos = if let Ok(rs) = RepoInfo::from_batch_path(parent_path) {
         rs
       } else {
@@ -1577,7 +1651,7 @@ fn main() -> ExitCode {
       };
 
       info!("Updating global repository index...");
-      if let Err(e) = render_index(&output_path, &repos) {
+      if let Err(e) = render_index(&output_path, &repos, &cmd.output_root) {
         errorln!("Failed rendering global repository index: {e}");
       }
       info_done!();
@@ -1589,7 +1663,14 @@ fn main() -> ExitCode {
 
         info!("Updating pages for {name:?}...", name = repo.name);
 
-        let renderer = if let Ok(r) = RepoRenderer::new(repo, &output_path) {
+        let renderer = RepoRenderer::new(
+          repo,
+          &output_path,
+          cmd.full_build,
+          &cmd.output_root,
+        );
+
+        let renderer = if let Ok(r) = renderer {
           r
         } else {
           return ExitCode::FAILURE;
