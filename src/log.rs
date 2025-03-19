@@ -95,14 +95,14 @@ macro_rules! info_done {
 #[macro_export]
 macro_rules! info_count {
   ($count:expr, $total:expr; $($arg:tt)+) => ({
-    use crate::log::{BOLD_GREEN, RESET};
+    use $crate::log::{BOLD_GREEN, RESET};
     let mut stdout = io::stdout().lock();
     let _ = write!(
       stdout,
       "{BOLD_GREEN}[{count:>padding$}/{total}]{RESET} {args}",
       count = $count,
       total = $total,
-      padding = crate::log_floor($total),
+      padding = $crate::log_floor($total),
       args = std::format_args!($($arg)+)
     );
     let _ = stdout.flush();
