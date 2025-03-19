@@ -21,7 +21,7 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
   match level {
     Level::Error => {
       let mut stderr = io::stderr();
-      let _ = write!(stderr, "{BOLD_RED}=> ERROR:{RESET} ");
+      let _ = write!(stderr, "{BOLD_RED}ERROR:{RESET} ");
       let _ = if newline {
         writeln!(stderr, "{}", args)
       } else {
@@ -31,7 +31,7 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
     }
     Level::Info => {
       let mut stdout = io::stdout().lock();
-      let _ = write!(stdout, "{BOLD_GREEN}=>{RESET} ");
+      let _ = write!(stdout, "{BOLD_GREEN}INFO:{RESET} ");
       let _ = if newline {
         writeln!(stdout, "{}", args)
       } else {
@@ -41,7 +41,7 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
     }
     Level::Warn => {
       let mut stdout = io::stdout().lock();
-      let _ = write!(stdout, "{BOLD_YELLOW}=> WARNING:{RESET} ");
+      let _ = write!(stdout, "{BOLD_YELLOW}WARNING:{RESET} ");
       let _ = if newline {
         writeln!(stdout, "{}", args)
       } else {
@@ -99,7 +99,7 @@ macro_rules! info_count {
     let mut stdout = io::stdout().lock();
     let _ = write!(
       stdout,
-      "{BOLD_GREEN}[{count:>padding$}/{total}]{RESET} {args}",
+      "{BOLD_GREEN}=> {count:>padding$}/{total}{RESET} {args}",
       count = $count,
       total = $total,
       padding = $crate::log_floor($total),
