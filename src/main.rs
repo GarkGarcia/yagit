@@ -577,7 +577,7 @@ impl<'repo> RepoRenderer<'repo> {
     // skip rendering the page if the commit the blob was last updated on is
     // older than the page
     if let Ok(meta) = fs::metadata(&page_path) {
-      let last_modified = meta.accessed().unwrap();
+      let last_modified = meta.modified().unwrap();
       if last_modified > last_commit_time[&blob.id()] {
         return Ok(());
       }
