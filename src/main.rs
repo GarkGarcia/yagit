@@ -551,7 +551,7 @@ impl<'repo> RepoRenderer<'repo> {
 
           tree_stack.push((subtree, path));
         }
-        Some(ObjectType::Commit) => {
+        Some(ObjectType::Commit) => if !self.repo.is_bare() {
           let submod = self
             .repo
             .find_submodule(&path.to_string_lossy())
@@ -571,6 +571,16 @@ impl<'repo> RepoRenderer<'repo> {
               path = Escaped(&path.to_string_lossy()),
             )?;
           }
+        } else {
+          // we cannot lookup a submodule in a bare repo, because the
+          // .gitmodules index is located in the working tree
+          warnln!("Cannot lookup {path:?} submodule in {repo}: {repo:?} is a bare repository.",
+                  repo = self.name);
+          writeln!(
+            &mut f,
+            "<tr><td><span class=\"subtree\">{path}@</span></td></tr>",
+            path = Escaped(&path.to_string_lossy()),
+          )?;
         }
         Some(kind) => {
           unreachable!("unexpected tree entry kind {kind:?}")
