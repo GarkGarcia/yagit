@@ -9,6 +9,7 @@ use std::{
   time::{Duration, SystemTime},
   env,
   process::ExitCode,
+  cmp,
 };
 use git2::{
   Repository,
@@ -83,12 +84,13 @@ enum PageTitle<'a> {
 }
 
 struct RepoInfo {
-  pub name: String,
-  pub owner: String,
+  pub name:        String,
+  pub owner:       String,
   pub description: Option<String>,
 
-  pub repo: Repository,
-  pub last_commit: Option<Time>,
+  pub repo:         Repository,
+  pub last_commit:  Time,
+  pub first_commit: u32,
 }
 
 impl RepoInfo {
@@ -105,18 +107,32 @@ impl RepoInfo {
       }
     };
 
-    let last_commit = {
+    let (first_commit, last_commit) = {
       let mut revwalk = repo.revwalk().unwrap();
       revwalk.push_head().unwrap();
 
-      if let Some(Ok(last_oid)) = revwalk.next() {
-        let commit = repo.find_commit(last_oid).unwrap();
-        let time = commit.author().when();
-        Some(time)
-      } else {
-        None
-      }
+      revwalk.flatten().fold(
+        (u32::MAX, Time::new(i64::MIN, 0)),
+        |(min, max), commit_id| {
+          let commit = repo.find_commit(commit_id).unwrap();
+          let commit_time = commit.author().when();
+
+          (
+            cmp::min(min, commit_time.seconds() as u32),
+            cmp::max_by(
+              max,
+              commit_time,
+              |t1, t2| t1.seconds().cmp(&t2.seconds()),
+            ),
+          )
+        }
+      )
     };
+
+    if first_commit == u32::MAX {
+      errorln!("Repository {path:?} has no commits yet");
+      return Err(());
+    }
 
     let mut path = PathBuf::from(&path);
     if !repo.is_bare() {
@@ -134,11 +150,11 @@ impl RepoInfo {
       match read {
         Ok(Ok(_))  => owner,
         Ok(Err(e)) => {
-          errorln!("Could not read the owner of {:?}: {e}", path);
+          errorln!("Could not read the owner of {path:?}: {e}");
           return Err(());
         }
         Err(e) => {
-          errorln!("Could not read the owner of {:?}: {e}", path);
+          errorln!("Could not read the owner of {path:?}: {e}");
           return Err(());
         }
       }
@@ -155,13 +171,11 @@ impl RepoInfo {
       match read {
         Ok(Ok(_))  => Some(dsc),
         Ok(Err(e)) => {
-          warnln!("Could not read the description of {:?}: {e}",
-                  path);
+          warnln!("Could not read the description of {path:?}: {e}");
           None
         }
         Err(e) => {
-          warnln!("Could not read the description of {:?}: {e}",
-                  path);
+          warnln!("Could not read the description of {path:?}: {e}");
           None
         }
       }
@@ -172,6 +186,7 @@ impl RepoInfo {
       owner,
       description,
       repo,
+      first_commit,
       last_commit,
     })
   }
@@ -197,6 +212,8 @@ impl RepoInfo {
             _ => continue,
           }
         }
+
+        result.sort_by(|r1, r2| r2.first_commit.cmp(&r1.first_commit));
 
         Ok(result)
       }
@@ -574,7 +591,7 @@ impl<'repo> RepoRenderer<'repo> {
         } else {
           // we cannot lookup a submodule in a bare repo, because the
           // .gitmodules index is located in the working tree
-          warnln!("Cannot lookup {path:?} submodule in {repo}: {repo:?} is a bare repository.",
+          warnln!("Cannot lookup the {path:?} submodule in {repo}: {repo:?} is a bare repository",
                   repo = self.name);
           writeln!(
             &mut f,
@@ -1405,10 +1422,9 @@ fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
 
     writeln!(&mut f, "<div>")?;
     writeln!(&mut f, "<span>{owner}</span>", owner = Escaped(&repo.owner))?;
-    if let Some(date) = repo.last_commit {
-      writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
-                       datetime  = DateTime(date), date = Date(date))?;
-    }
+    writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
+                     datetime  = DateTime(repo.last_commit),
+                     date = Date(repo.last_commit))?;
     writeln!(&mut f, "</div>")?;
 
     if let Some(ref description) = repo.description {
