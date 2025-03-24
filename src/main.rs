@@ -1608,9 +1608,10 @@ fn main() -> ExitCode {
       info_done!();
 
       let n_repos = repos.len();
+      job_counter_start!(n_repos);
       infoln!("Updating pages for git repositories at {batch_path:?}...");
-      for (i, repo) in repos.into_iter().enumerate() {
-        info_count!(i + 1, n_repos; "{name}...", name = repo.name);
+      for repo in repos {
+        job_counter_increment!(repo.name);
 
         let renderer = RepoRenderer::new(
           repo,
