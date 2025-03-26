@@ -809,15 +809,25 @@ impl<'repo> RepoRenderer<'repo> {
     commit: &Commit<'repo>,
     last_commit_time: &mut HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
+    let mut path = self.output_path.clone();
+    path.push(&self.name);
+    path.push(COMMIT_SUBDIR);
+    path.push(format!("{}.html", commit.id()));
+    let should_skip = !self.full_build && path.exists();
+
+    // ========================================================================
     #[derive(Debug)]
     struct DeltaInfo<'delta> {
       id: usize,
+
       add_count: usize,
       del_count: usize,
-      delta: DiffDelta<'delta>,
+      delta:     DiffDelta<'delta>,
+
       new_path: &'delta Path,
       old_path: &'delta Path,
-      patch: Patch<'delta>,
+
+      num_hunks: usize,
       is_binary: bool,
     }
 
@@ -848,6 +858,7 @@ impl<'repo> RepoRenderer<'repo> {
       let old_path = &old_file.path().unwrap();
       let new_path = &new_file.path().unwrap();
 
+      // collect the last time a file was modified at
       let id = new_file.id();
       let commit_time = Duration::from_secs(commit.time().seconds() as u64);
       let commit_time = SystemTime::UNIX_EPOCH + commit_time;
@@ -859,6 +870,10 @@ impl<'repo> RepoRenderer<'repo> {
         }
       } else {
         last_commit_time.insert(id, commit_time);
+      }
+
+      if should_skip {
+        continue;
       }
 
       let patch = Patch::from_diff(&diff, delta_id)
@@ -874,18 +889,17 @@ impl<'repo> RepoRenderer<'repo> {
         delta: diff_delta,
         old_path,
         new_path,
-        patch,
+        num_hunks,
         is_binary: old_file.is_binary() || new_file.is_binary(),
       };
 
       for hunk_id in 0..num_hunks {
-        let lines_of_hunk = delta_info.patch
+        let lines_of_hunk = patch
           .num_lines_in_hunk(hunk_id)
           .unwrap();
 
         for line_id in 0..lines_of_hunk {
-          let line = delta_info
-            .patch
+          let line = patch
             .line_in_hunk(hunk_id, line_id)
             .unwrap();
 
@@ -901,13 +915,9 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     // ========================================================================
-    let mut path = self.output_path.clone();
-    path.push(&self.name);
-    path.push(COMMIT_SUBDIR);
-    path.push(format!("{}.html", commit.id()));
 
     // skip rendering the commit page if the file already exists
-    if !self.full_build && path.exists() {
+    if should_skip {
       return Ok(());
     }
 
@@ -1070,18 +1080,21 @@ impl<'repo> RepoRenderer<'repo> {
       if delta_info.is_binary {
         writeln!(&mut f, "Binary files differ")?;
       } else {
-        for hunk_id in 0..delta_info.patch.num_hunks() {
+        let patch = Patch::from_diff(&diff, delta_info.id)
+          .unwrap()
+          .expect("diff should have patch");
+
+        for hunk_id in 0..delta_info.num_hunks {
           // we cannot cache the hunks:
           // libgit invalidates the data after a while
-          let (hunk, lines_of_hunk) = delta_info.patch.hunk(hunk_id).unwrap();
+          let (hunk, lines_of_hunk) = patch.hunk(hunk_id).unwrap();
 
           write!(&mut f, "<a href=\"#d{delta_id}-{hunk_id}\" id=\"d{delta_id}-{hunk_id}\" class=\"h\">")?;
           f.write_all(hunk.header())?;
           write!(&mut f, "</a>")?;
 
           for line_id in 0..lines_of_hunk {
-            let line = delta_info
-              .patch
+            let line = patch
               .line_in_hunk(hunk_id, line_id)
               .unwrap();
 
