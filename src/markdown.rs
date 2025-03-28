@@ -116,7 +116,7 @@ fn start_tag<W: Write>(
         write!(w, "<img src=\"{url}\" ", url = Escaped(&dest_url))?;
       } else {
         // relative URL
-        write!(w, "<img src=\"/{BLOB_SUBDIR}/{url}\" ",
+        write!(w, "<img src=\"./{BLOB_SUBDIR}/{url}\" ",
                   url = Escaped(&dest_url))?;
       };
 
