@@ -1,10 +1,9 @@
 //! Macros for logging.
 //!
-//! This implementation should be thread safe (unlike an implementation using
-//! `println!` and `eprintln!`) because access to the global stdout/stderr
-//! handle is syncronized using a lock.
+//! This implementation is NOT thread safe, since yagit is only expected to run
+//! on my single-threaded server.
 #![allow(static_mut_refs)]
-use std::{io::{self, Write}, fmt::Arguments, sync::RwLock};
+use std::{io::{self, Write}, fmt::Arguments};
 
 const BOLD_WHITE:  &str = "\u{001b}[1;37m";
 const BOLD_BLUE:   &str = "\u{001b}[1;34m";
@@ -12,10 +11,12 @@ const BOLD_RED:    &str = "\u{001b}[1;31m";
 const BOLD_YELLOW: &str = "\u{001b}[1;33m";
 const RESET:       &str = "\u{001b}[0m";
 
-// TODO: [optimize]: make a thread-unsafe version of this under a compile flag
-static NEEDS_NEWLINE: RwLock<bool> = RwLock::new(false);
-static mut COUNTER_TOTAL: RwLock<usize> = RwLock::new(0);
-static mut COUNTER_STATE: RwLock<Option<CounterState>> = RwLock::new(None);
+static mut NEEDS_NEWLINE: bool = false;
+static mut COUNTER: Counter = Counter {
+  total: 0,
+  count: 0,
+  current_repo_name: String::new(),
+};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Level {
@@ -24,17 +25,18 @@ pub(crate) enum Level {
   Warn,
 }
 
-struct CounterState {
-  count: usize,
+struct Counter {
+  total:             usize,
+  count:             usize,
   current_repo_name: String,
 }
 
 pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
   match level {
-    Level::Error => {
+    Level::Error => unsafe {
       let mut stderr = io::stderr();
 
-      if needs_newline() {
+      if NEEDS_NEWLINE {
         let _ = writeln!(stderr);
       }
 
@@ -47,39 +49,33 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
         let _ = stderr.flush();
       }
     }
-    Level::Info => {
-      let mut stdout = io::stdout().lock();
+    Level::Info => unsafe {
+      let mut stdout = io::stdout();
 
-      if needs_newline() {
+      if NEEDS_NEWLINE {
         let _ = writeln!(stdout);
       }
 
       let _ = write!(stdout, "{BOLD_BLUE}INFO:{RESET} ");
       if newline {
-        let counter_state = unsafe { COUNTER_STATE.get_mut().unwrap() };
         let _ = writeln!(stdout, "{}", args);
-        if let Some(ref counter) = counter_state {
-          log_job_counter(counter);
-        }
+        log_job_counter();
       } else {
         let _ = write!(stdout, "{}", args);
         let _ = stdout.flush();
       }
     }
-    Level::Warn => {
-      let mut stdout = io::stdout().lock();
+    Level::Warn => unsafe {
+      let mut stdout = io::stdout();
 
-      if needs_newline() {
+      if NEEDS_NEWLINE {
         let _ = writeln!(stdout);
       }
 
       let _ = write!(stdout, "{BOLD_YELLOW}WARNING:{RESET} ");
       if newline {
-        let counter_state = unsafe { COUNTER_STATE.get_mut().unwrap() };
         let _ = writeln!(stdout, "{}", args);
-        if let Some(ref counter) = counter_state {
-          log_job_counter(counter);
-        }
+        log_job_counter();
       } else {
         let _ = write!(stdout, "{}", args);
       }
@@ -88,12 +84,14 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
   }
 
   if !newline {
-    set_needs_newline(true);
+    unsafe {
+      NEEDS_NEWLINE = true;
+    }
   }
 }
 
 pub fn info_done(args: Option<&Arguments<'_>>) {
-  let mut stdout = io::stdout().lock();
+  let mut stdout = io::stdout();
   let _ = match args {
     Some(args) => {
       writeln!(stdout, " {}", args)
@@ -102,63 +100,52 @@ pub fn info_done(args: Option<&Arguments<'_>>) {
       writeln!(stdout, " done!")
     }
   };
-  set_needs_newline(false);
+  unsafe {
+    NEEDS_NEWLINE = false;
+  }
 }
 
 pub fn job_counter_start(total: usize) {
   unsafe {
-    *COUNTER_TOTAL.write().unwrap() = total;
+    COUNTER.total = total;
   }
 }
 
 pub fn job_counter_increment(repo_name: &str) {
-  let counter_total = unsafe { COUNTER_TOTAL.get_mut().unwrap() };
-  let counter = unsafe { COUNTER_STATE.get_mut().unwrap() };
+  unsafe {
+    COUNTER.count += 1;
+    COUNTER.current_repo_name.clear();
+    COUNTER.current_repo_name.push_str(repo_name);
 
-  if let Some(ref mut inner) = counter {
-    inner.count += 1;
-    inner.current_repo_name = repo_name.to_owned();
-
-    log_job_counter(inner);
+    log_job_counter();
 
     // deinit the counter when we reach the total
-    if inner.count == *counter_total {
-      *counter = None;
-      *counter_total = 0;
+    if COUNTER.count == COUNTER.total {
+      COUNTER.total = 0;
+      COUNTER.count = 0;
     }
-  } else {
-    let new_counter = CounterState {
-      count: 1,
-      current_repo_name: repo_name.to_owned(),
-    };
-
-    log_job_counter(&new_counter);
-    *counter = Some(new_counter);
   }
 }
 
-fn log_job_counter(counter: &CounterState) {
-  let mut stdout = io::stdout().lock();
-  let counter_total = unsafe { *COUNTER_TOTAL.read().unwrap() };
+fn log_job_counter() {
+  unsafe {
+    if COUNTER.total == 0 {
+      return;
+    }
 
-  let _ = write!(
-    stdout,
-    "{BOLD_BLUE}->{RESET} {BOLD_WHITE}{count:>padding$}/{total}{RESET} {name}...",
-    count = counter.count,
-    total = counter_total,
-    padding = crate::log_floor(counter_total),
-    name = counter.current_repo_name,
-  );
-  let _ = stdout.flush();
-  set_needs_newline(true);
-}
+    let mut stdout = io::stdout();
 
-fn needs_newline() -> bool {
-  *NEEDS_NEWLINE.read().unwrap()
-}
-
-fn set_needs_newline(val: bool) {
-  *NEEDS_NEWLINE.write().unwrap() = val;
+    let _ = write!(
+      stdout,
+      "{BOLD_BLUE}->{RESET} {BOLD_WHITE}{count:>padding$}/{total}{RESET} {name}...",
+      count = COUNTER.count,
+      total = COUNTER.total,
+      padding = crate::log_floor(COUNTER.total),
+      name = COUNTER.current_repo_name,
+    );
+    let _ = stdout.flush();
+    NEEDS_NEWLINE = true;
+  }
 }
 
 #[macro_export]
@@ -251,7 +238,7 @@ pub fn usage(program_name: &str) {
   let mut stderr = io::stderr();
   let _ = writeln!(
     stderr,
-    r#"   {BOLD_YELLOW}USAGE:{RESET} {program_name} render       REPO_PATH  OUTPUT_PATH
-          {program_name} render-batch BATCH_PATH OUTPUT_PATH"#
+    r#"{BOLD_YELLOW}USAGE:{RESET} {program_name} render       REPO_PATH  OUTPUT_PATH
+       {program_name} render-batch BATCH_PATH OUTPUT_PATH"#
   );
 }
