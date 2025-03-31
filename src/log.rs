@@ -129,7 +129,7 @@ pub fn job_counter_increment(repo_name: &str) {
 
 fn log_job_counter() {
   unsafe {
-    if COUNTER.total == 0 {
+    if COUNTER.count == 0 {
       return;
     }
 
