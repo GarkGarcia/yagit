@@ -25,25 +25,18 @@ application to adapt it for their own needs.
 To render the HTML pages for a single repository using yagit run:
 
 ```console
-$ yagit render REPO_PATH OUTPUT_PATH
+$ yagit render REPO_NAME
 ```
 
-The argument `REPO_PATH` should have the form `PARENT_PATH/REPO_NAME`, where
-`PARENT_PATH` is the path to the parent directory of `REPO_PATH`. yagit will
-generate the HTML pages for `REPO_PATH` at `OUTPUT_PATH/REPO_NAME`. yagit will
-also generate an index of all git repositories in `PARENT_PATH` at
-`OUTPUT_PATH/index.html`.
+yagit will generate the HTML pages for `REPOS_DIR/REPO_NAME` at
+`OUTPUT_PATH/REPO_NAME`. yagit will also generate an index of all git
+repositories in `REPOS_DIR` at `OUTPUT_PATH/index.html`.
 
-To render HTML pages for all repositories in a given directory in batch mode
-run:
+To render HTML pages for all repositories at `REPOS_DIR` run:
 
 ```console
-$ yagit render-batch BATCH_PATH OUTPUT_PATH
+$ yagit render-batch
 ```
-
-yagit will generate the HTML pages for `BATCH_PATH/REPO_NAME` at
-`OUTPUT_PATH/REPO_NAME`, as well as an index of all git repositories in
-`BATCH_PATH` at `OUTPUT_PATH/index.html`.
 
 ## Installation
 

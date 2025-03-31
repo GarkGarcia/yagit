@@ -7,7 +7,6 @@ use std::{
   ffi::OsStr,
   collections::HashMap,
   time::{Duration, SystemTime},
-  env,
   process::ExitCode,
   cmp,
 };
@@ -25,19 +24,16 @@ use git2::{
   Oid,
 };
 use time::{DateTime, Date, FullDate};
+use command::{Cmd, SubCmd, Flags};
+use config::{TREE_SUBDIR, BLOB_SUBDIR, COMMIT_SUBDIR};
 
 #[macro_use]
 mod log;
 
 mod markdown;
 mod time;
-
-#[cfg(not(debug_assertions))]
-const GIT_USER: &str = "git";
-
-const TREE_SUBDIR:   &str = "tree";
-const BLOB_SUBDIR:   &str = "blob";
-const COMMIT_SUBDIR: &str = "commit";
+mod command;
+mod config;
 
 const README_NAMES: &[&str] = &["README", "README.txt", "README.md"];
 const LICENSE_NAME: &str    = "LICENSE";
@@ -191,14 +187,18 @@ impl RepoInfo {
     })
   }
 
-  fn from_batch_path<P>(path: P) -> Result<Vec<Self>, ()>
-  where
-    P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
-  {
-    let mut result = Vec::new();
+  /// Returns an (orderer) index of the repositories at `config::REPOS_DIR` or
+  /// `config::PRIVATE_REPOS_DIR`.
+  fn index(private: bool) -> Result<Vec<Self>, ()> {
+    let repos_dir = if private {
+      config::PRIVATE_REPOS_DIR
+    } else {
+      config::REPOS_DIR
+    };
 
-    match fs::read_dir(&path) {
+    match fs::read_dir(repos_dir) {
       Ok(dir) => {
+        let mut result = Vec::new();
         for entry in dir.flatten() {
           match entry.file_type() {
             Ok(ft) if ft.is_dir() => {
@@ -218,7 +218,7 @@ impl RepoInfo {
         Ok(result)
       }
       Err(e) => {
-        errorln!("Could not read repositories at {path:?} dir: {e}");
+        errorln!("Could not read repositories at {repos_dir:?}: {e}");
         Err(())
       }
     }
@@ -238,25 +238,6 @@ struct Readme {
   format:  ReadmeFormat,
 }
 
-#[derive(Debug, Clone)]
-// this is necessary for pages to link to the correct addresses when rendering
-// private repos
-/// A path describing the root in the output directory tree
-enum RootPath {
-  Slash,
-  Path(String),
-}
-
-impl Display for RootPath {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    if let Self::Path(p) = self {
-      write!(f, "/{}", Escaped(p.trim_matches('/')))?;
-    }
-
-    Ok(())
-  }
-}
-
 struct RepoRenderer<'repo> {
   pub name:        String,
   pub description: Option<String>,
@@ -265,25 +246,18 @@ struct RepoRenderer<'repo> {
   pub head:   Tree<'repo>,
   pub branch: String,
 
-  pub readme:      Option<Readme>,
-  pub license:     Option<String>,
+  pub readme:  Option<Readme>,
+  pub license: Option<String>,
 
+  // cached constants which depend on command-line flags:
+  // these shouldn't be modified at runtime
   pub full_build:  bool,
-  pub output_root: &'repo RootPath,
   pub output_path: PathBuf,
-
+  pub output_root: &'static str,
 }
 
 impl<'repo> RepoRenderer<'repo> {
-  fn new<P>(
-    repo: RepoInfo,
-    output_path: P,
-    full_build: bool,
-    output_root: &'repo RootPath,
-  ) -> Result<Self, ()>
-  where
-    P: AsRef<Path> + AsRef<OsStr>,
-  {
+  fn new(repo: RepoInfo, flags: Flags) -> Result<Self, ()> {
     let (head, branch) = {
       match repo.repo.head() {
         Ok(head) => unsafe {
@@ -361,16 +335,25 @@ impl<'repo> RepoRenderer<'repo> {
       }
     }
 
+    let (output_path, output_root) = if flags.private() {
+      (PathBuf::from(config::PRIVATE_OUTPUT_PATH), config::PRIVATE_OUTPUT_ROOT)
+    } else {
+      (PathBuf::from(config::OUTPUT_PATH), "")
+    };
+
     Ok(Self {
       name: repo.name,
+      description: repo.description,
+
+      repo: repo.repo,
       head,
       branch,
-      description: repo.description,
-      repo: repo.repo,
+
       readme,
       license,
-      output_path: PathBuf::from(&output_path),
-      full_build,
+
+      full_build: flags.full_build(),
+      output_path,
       output_root,
     })
   }
@@ -631,6 +614,9 @@ impl<'repo> RepoRenderer<'repo> {
     page_path.extend(&path);
     let page_path = format!("{}.html", page_path.to_string_lossy());
 
+    // TODO: [optimize]: avoid late-stage decision-making by moving the 1st
+    // `if` to outside of the function body?
+    //
     // skip rendering the page if the commit the blob was last updated on is
     // older than the page
     if !self.full_build {
@@ -872,6 +858,7 @@ impl<'repo> RepoRenderer<'repo> {
         last_commit_time.insert(id, commit_time);
       }
 
+      // TODO: [optmize]: refactor this? avoid late-stage decision making
       if should_skip {
         continue;
       }
@@ -1403,11 +1390,19 @@ fn render_footer(f: &mut File) -> io::Result<()> {
   writeln!(f, "</footer>")
 }
 
-fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
-  output_path: P,
-  repos: &[RepoInfo],
-  output_root: &RootPath,
-) -> io::Result<()> {
+fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
+  let output_path = if private {
+    config::PRIVATE_OUTPUT_PATH
+  } else {
+    config::OUTPUT_PATH
+  };
+
+  let output_root = if private {
+    config::PRIVATE_OUTPUT_ROOT
+  } else {
+    ""
+  };
+
   let mut path = PathBuf::from(&output_path);
   path.push("index.html");
 
@@ -1458,130 +1453,6 @@ fn render_index<P : AsRef<Path> + AsRef<OsStr>>(
   Ok(())
 }
 
-#[derive(Clone, Debug)]
-struct Cmd {
-  sub_cmd: SubCmd,
-
-  full_build:  bool,
-  output_root: RootPath,
-}
-
-#[derive(Clone, Debug)]
-enum SubCmd {
-  RenderBatch {
-    batch_path:  String,
-    output_path: String,
-  },
-  Render {
-    repo_name:   String,
-    parent_path: String,
-    output_path: String,
-  },
-}
-
-impl Cmd {
-  pub fn parse() -> Result<(Self, String), ()> {
-    let mut args = env::args();
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    enum CmdTag {
-      RenderBatch,
-      Render,
-    }
-
-    let program_name = args.next().unwrap();
-
-    let mut full_build = false;
-    let mut output_root = RootPath::Slash;
-
-    let cmd = loop {
-      match args.next() {
-        Some(arg) if arg == "render-batch" => break CmdTag::RenderBatch,
-        Some(arg) if arg == "render"       => break CmdTag::Render,
-
-        // TODO: documment these flags
-        Some(arg) if arg == "--full-build" => {
-          full_build = true;
-        }
-        Some(arg) if arg == "--output-root" => {
-          if let Some(root) = args.next() {
-            output_root = RootPath::Path(root);
-          } else {
-            errorln!("No value provided for the `--output-root` flag");
-            log::usage(&program_name);
-            return Err(());
-          }
-        }
-
-        Some(arg) => {
-          errorln!("Unknown flag {arg:?}");
-          log::usage(&program_name);
-          return Err(());
-        }
-        None => {
-          errorln!("No subcommand provided");
-          log::usage(&program_name);
-          return Err(());
-        }
-      }
-    };
-
-    let input_path = if let Some(dir) = args.next() {
-      dir
-    } else {
-      errorln!("No input path provided");
-      log::usage(&program_name);
-      return Err(());
-    };
-
-    let output_path = if let Some(dir) = args.next() {
-      dir
-    } else {
-      errorln!("No output path provided");
-      log::usage(&program_name);
-      return Err(());
-    };
-
-    if args.next().is_some() {
-      warnln!("Additional command line arguments provided. Ignoring trailing arguments...");
-      log::usage(&program_name);
-    }
-
-    let sub_cmd = match cmd {
-      CmdTag::RenderBatch => {
-        SubCmd::RenderBatch { batch_path: input_path, output_path, }
-      }
-      CmdTag::Render => {
-        let input_abs = match fs::canonicalize(&input_path) {
-          Ok(path) => path,
-          Err(e) => {
-            errorln!("Could not extract absolute path from {input_path:?}: {e}");
-            return Err(());
-          }
-        };
-
-        let parent_path = if let Some(parent) = input_abs.parent() {
-          parent.to_string_lossy().to_string()
-        } else {
-          errorln!("Could not extract parent path from {input_path:?}");
-          return Err(());
-        };
-
-        let repo_name = if let Some(name) = input_abs.file_name() {
-          name.to_string_lossy().to_string()
-        } else {
-          errorln!("Could not extract repository name from {input_path:?}");
-          return Err(());
-        };
-
-        SubCmd::Render { parent_path, repo_name, output_path, }
-      }
-    };
-
-    Ok((Self { sub_cmd, full_build, output_root, }, program_name))
-  }
-}
-
 fn main() -> ExitCode {
   #[allow(unused_variables)]
   let (cmd, program_name) = if let Ok(cmd) = Cmd::parse() {
@@ -1593,48 +1464,48 @@ fn main() -> ExitCode {
   #[cfg(not(debug_assertions))]
   unsafe {
     use std::ffi::CStr;
+    use config::GIT_USER;
 
     let uid = libc::getuid();
     let pw = libc::getpwuid(uid);
-    if !pw.is_null() {
-      let user = CStr::from_ptr((*pw).pw_name).to_string_lossy();
+    assert!(!pw.is_null());
 
-      if user != GIT_USER {
-        errorln!("Running {program_name} as the {user:?} user. Re-run as {GIT_USER:?}");
-        return ExitCode::FAILURE;
-      }
+    let user = CStr::from_ptr((*pw).pw_name).to_string_lossy();
+    if user != GIT_USER {
+      errorln!("Running {program_name} as the {user:?} user. Re-run as {GIT_USER:?}");
+      return ExitCode::FAILURE;
     }
   }
 
-  match cmd.sub_cmd {
-    SubCmd::RenderBatch { batch_path, output_path } => {
-      let repos = if let Ok(rs) = RepoInfo::from_batch_path(&batch_path) {
-        rs
-      } else {
-        return ExitCode::FAILURE;
-      };
+  let repos_dir = if cmd.flags.private() {
+    config::PRIVATE_REPOS_DIR
+  } else {
+    config::REPOS_DIR
+  };
 
+  let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
+    repos
+  } else {
+    return ExitCode::FAILURE;
+  };
+
+  match cmd.sub_cmd {
+    SubCmd::RenderBatch => {
       info!("Updating global repository index...");
-      if let Err(e) = render_index(&output_path, &repos, &cmd.output_root) {
+      if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering global repository index: {e}");
       }
       info_done!();
 
       let n_repos = repos.len();
       job_counter_start!(n_repos);
-      infoln!("Updating pages for git repositories at {batch_path:?}...");
+      infoln!("Updating pages for git repositories at {repos_dir:?}...");
       for repo in repos {
         job_counter_increment!(repo.name);
 
-        let renderer = RepoRenderer::new(
-          repo,
-          &output_path,
-          cmd.full_build,
-          &cmd.output_root,
-        );
-
-        let renderer = if let Ok(r) = renderer {
-          r
+        let renderer = RepoRenderer::new(repo, cmd.flags);
+        let renderer = if let Ok(renderer) = renderer {
+          renderer
         } else {
           return ExitCode::FAILURE;
         };
@@ -1648,35 +1519,27 @@ fn main() -> ExitCode {
 
       }
     }
-    SubCmd::Render { parent_path, repo_name, output_path } => {
-      let repos = if let Ok(rs) = RepoInfo::from_batch_path(parent_path) {
-        rs
-      } else {
-        return ExitCode::FAILURE;
-      };
-
+    SubCmd::Render { repo_name } => {
       info!("Updating global repository index...");
-      if let Err(e) = render_index(&output_path, &repos, &cmd.output_root) {
+      if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering global repository index: {e}");
       }
       info_done!();
 
-      for repo in repos {
-        if *repo.name != *repo_name {
-          continue;
+      let mut repo = None;
+      for r in repos {
+        if *r.name == *repo_name {
+          repo = Some(r);
+          break;
         }
+      }
 
+      if let Some(repo) = repo {
         info!("Updating pages for {name:?}...", name = repo.name);
 
-        let renderer = RepoRenderer::new(
-          repo,
-          &output_path,
-          cmd.full_build,
-          &cmd.output_root,
-        );
-
-        let renderer = if let Ok(r) = renderer {
-          r
+        let renderer = RepoRenderer::new(repo, cmd.flags);
+        let renderer = if let Ok(renderer) = renderer {
+          renderer
         } else {
           return ExitCode::FAILURE;
         };
@@ -1687,6 +1550,9 @@ fn main() -> ExitCode {
         }
 
         info_done!();
+      } else {
+        errorln!("Couldnt' find repository {repo_name:?} at {repos_dir:?}");
+        return ExitCode::FAILURE;
       }
     }
   }
