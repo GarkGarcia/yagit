@@ -13,6 +13,10 @@ pub enum SubCmd {
   Render {
     repo_name: String,
   },
+  Init {
+    repo_name:   String,
+    description: String,
+  }
 }
 
 impl Cmd {
@@ -23,6 +27,7 @@ impl Cmd {
     enum CmdTag {
       RenderBatch,
       Render,
+      Init,
     }
 
     let program_name = args.next().unwrap();
@@ -32,6 +37,7 @@ impl Cmd {
       match args.next() {
         Some(arg) if arg == "render-batch" => break CmdTag::RenderBatch,
         Some(arg) if arg == "render"       => break CmdTag::Render,
+        Some(arg) if arg == "init"         => break CmdTag::Init,
 
         // TODO: documment these flags
         Some(arg) if arg == "--full-build" => {
@@ -64,8 +70,8 @@ impl Cmd {
         SubCmd::RenderBatch
       }
       CmdTag::Render => {
-        let repo_name = if let Some(dir) = args.next() {
-          dir
+        let repo_name = if let Some(name) = args.next() {
+          name
         } else {
           errorln!("No repository name providade");
           log::usage(&program_name);
@@ -73,6 +79,25 @@ impl Cmd {
         };
 
         SubCmd::Render { repo_name, }
+      }
+      CmdTag::Init => {
+        let repo_name = if let Some(name) = args.next() {
+          name
+        } else {
+          errorln!("No repository name providade");
+          log::usage(&program_name);
+          return Err(());
+        };
+
+        let description = if let Some(dsc) = args.next() {
+          dsc
+        } else {
+          errorln!("No description providade");
+          log::usage(&program_name);
+          return Err(());
+        };
+
+        SubCmd::Init { repo_name, description, }
       }
     };
 

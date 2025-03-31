@@ -8,6 +8,7 @@ use std::{
   collections::HashMap,
   time::{Duration, SystemTime},
   process::ExitCode,
+  os::unix::fs::PermissionsExt,
   cmp,
 };
 use git2::{
@@ -22,6 +23,7 @@ use git2::{
   DiffLineType,
   Time,
   Oid,
+  RepositoryInitOptions,
 };
 use time::{DateTime, Date, FullDate};
 use command::{Cmd, SubCmd, Flags};
@@ -98,7 +100,7 @@ impl RepoInfo {
     let repo = match Repository::open(&path) {
       Ok(repo) => repo,
       Err(_)   => {
-        errorln!("Could not open repository at {path:?}");
+        errorln!("Could not open repository in {path:?}");
         return Err(());
       }
     };
@@ -187,7 +189,7 @@ impl RepoInfo {
     })
   }
 
-  /// Returns an (orderer) index of the repositories at `config::REPOS_DIR` or
+  /// Returns an (orderer) index of the repositories in `config::REPOS_DIR` or
   /// `config::PRIVATE_REPOS_DIR`.
   fn index(private: bool) -> Result<Vec<Self>, ()> {
     let repos_dir = if private {
@@ -218,7 +220,7 @@ impl RepoInfo {
         Ok(result)
       }
       Err(e) => {
-        errorln!("Could not read repositories at {repos_dir:?}: {e}");
+        errorln!("Could not read repositories in {repos_dir:?}: {e}");
         Err(())
       }
     }
@@ -1453,6 +1455,70 @@ fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
   Ok(())
 }
 
+fn init_repo(
+  repo_path: &PathBuf,
+  description: &str,
+  private: bool,
+) -> io::Result<()> {
+  const HOOK_MODE: u32 = 0o755;
+
+  let mut owner_path = repo_path.clone();
+  owner_path.push("owner");
+
+  let mut owner_f = match File::create(&owner_path) {
+    Ok(f)  => f,
+    Err(e) => {
+      errorln!("Failed to create {owner_path:?}: {e}");
+      return Err(e);
+    }
+  };
+
+  write!(&mut owner_f, "{}", config::OWNER.trim())?;
+
+  let mut dsc_path = repo_path.clone();
+  dsc_path.push("description");
+
+  let mut dsc_f = match File::create(&dsc_path) {
+    Ok(f)  => f,
+    Err(e) => {
+      errorln!("Failed to create {dsc_path:?}: {e}");
+      return Err(e);
+    }
+  };
+
+  write!(&mut dsc_f, "{}", description)?;
+
+  let mut hook_path = repo_path.clone();
+  hook_path.push("hooks");
+  hook_path.push("post-update");
+
+  let mut hook_f = match File::create(&hook_path) {
+    Ok(f)  => f,
+    Err(e) => {
+      errorln!("Failed to create {hook_path:?}: {e}");
+      return Err(e);
+    }
+  };
+
+  writeln!(&mut hook_f, "#!/bin/sh")?;
+  if private {
+    writeln!(&mut hook_f, "yagit --private render {repo_path:?}")?;
+  } else {
+    writeln!(&mut hook_f, "yagit render {repo_path:?}")?;
+  }
+
+  let mut mode = hook_f.metadata()?.permissions();
+  mode.set_mode(HOOK_MODE);
+
+  drop(hook_f);
+  if let Err(e) = fs::set_permissions(&hook_path, mode) {
+    errorln!("Failed set permissions to {hook_path:?}: {e}");
+    return Err(e);
+  }
+
+  Ok(())
+}
+
 fn main() -> ExitCode {
   #[allow(unused_variables)]
   let (cmd, program_name) = if let Ok(cmd) = Cmd::parse() {
@@ -1483,14 +1549,14 @@ fn main() -> ExitCode {
     config::REPOS_DIR
   };
 
-  let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
-    repos
-  } else {
-    return ExitCode::FAILURE;
-  };
-
   match cmd.sub_cmd {
     SubCmd::RenderBatch => {
+      let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
+        repos
+      } else {
+        return ExitCode::FAILURE;
+      };
+
       info!("Updating global repository index...");
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering global repository index: {e}");
@@ -1499,7 +1565,7 @@ fn main() -> ExitCode {
 
       let n_repos = repos.len();
       job_counter_start!(n_repos);
-      infoln!("Updating pages for git repositories at {repos_dir:?}...");
+      infoln!("Updating pages for git repositories in {repos_dir:?}...");
       for repo in repos {
         job_counter_increment!(repo.name);
 
@@ -1520,6 +1586,12 @@ fn main() -> ExitCode {
       }
     }
     SubCmd::Render { repo_name } => {
+      let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
+        repos
+      } else {
+        return ExitCode::FAILURE;
+      };
+
       info!("Updating global repository index...");
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering global repository index: {e}");
@@ -1551,9 +1623,33 @@ fn main() -> ExitCode {
 
         info_done!();
       } else {
-        errorln!("Couldnt' find repository {repo_name:?} at {repos_dir:?}");
+        errorln!("Couldnt' find repository {repo_name:?} in {repos_dir:?}");
         return ExitCode::FAILURE;
       }
+    }
+    SubCmd::Init { repo_name, description } => {
+      let mut repo_path = if cmd.flags.private() {
+        PathBuf::from(config::PRIVATE_REPOS_DIR)
+      } else {
+        PathBuf::from(config::REPOS_DIR)
+      };
+      repo_path.push(&repo_name);
+
+      let mut opts = RepositoryInitOptions::new();
+      opts.bare(true).no_reinit(true);
+
+      info!("Initializing empty {repo_name:?} repository in {repo_path:?}...");
+
+      if let Err(e) = Repository::init_opts(&repo_path, &opts) {
+        errorln!("Couldn't initialize {repo_name:?}: {e}", e = e.message());
+        return ExitCode::FAILURE;
+      }
+
+      if init_repo(&repo_path, &description, cmd.flags.private()).is_err() {
+        return ExitCode::FAILURE;
+      }
+
+      info_done!();
     }
   }
 

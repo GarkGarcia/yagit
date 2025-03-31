@@ -33,6 +33,8 @@ pub const PRIVATE_OUTPUT_ROOT: &str = "/private";
 #[cfg(not(debug_assertions))]
 pub const GIT_USER: &str = "git";
 
+pub const OWNER: &str = "Pablo";
+
 pub const TREE_SUBDIR:   &str = "tree";
 pub const BLOB_SUBDIR:   &str = "blob";
 pub const COMMIT_SUBDIR: &str = "commit";
