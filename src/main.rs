@@ -25,6 +25,7 @@ use git2::{
   Oid,
   RepositoryInitOptions,
 };
+
 use time::{DateTime, Date, FullDate};
 use command::{Cmd, SubCmd, Flags};
 use config::{TREE_SUBDIR, BLOB_SUBDIR, COMMIT_SUBDIR};
@@ -53,21 +54,11 @@ impl Display for Escaped<'_> {
         '&'  => write!(f, "&amp;")?,
         '"'  => write!(f, "&quot;")?,
         '\'' => write!(f, "&apos;")?,
-        c  => c.fmt(f)?,
+        c    => c.fmt(f)?,
       }
     }
 
     Ok(())
-  }
-}
-
-/// A wrapper for HTML-escaped strings encoded as UTF-8
-struct EscapedUtf8<'a>(pub &'a [u8]);
-
-impl Display for EscapedUtf8<'_> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    let s = unsafe { std::str::from_utf8_unchecked(self.0) };
-    Escaped(s).fmt(f)
   }
 }
 
@@ -107,7 +98,12 @@ impl RepoInfo {
 
     let (first_commit, last_commit) = {
       let mut revwalk = repo.revwalk().unwrap();
-      revwalk.push_head().unwrap();
+      if let Err(e) = revwalk.push_head() {
+        errorln!("Couldn't retrieve repository HEAD in {name:?}: {e}. Check if HEAD contains any commits and points to the right branch",
+                 name = name.as_ref(),
+                 e = e.message());
+        return Err(());
+      }
 
       revwalk.flatten().fold(
         (u32::MAX, Time::new(i64::MIN, 0)),
@@ -1083,9 +1079,11 @@ impl<'repo> RepoRenderer<'repo> {
           write!(&mut f, "</a>")?;
 
           for line_id in 0..lines_of_hunk {
-            let line = patch
-              .line_in_hunk(hunk_id, line_id)
-              .unwrap();
+            let line = patch.line_in_hunk(hunk_id, line_id).unwrap();
+            let line_content = unsafe {
+              // the Git line content should be valid UTF8
+              std::str::from_utf8_unchecked(line.content())
+            };
 
             match delta_info.delta.status() {
               Delta::Modified => {
@@ -1105,10 +1103,10 @@ impl<'repo> RepoRenderer<'repo> {
                   write!(
                     &mut f,
                     "<a href=\"#d{delta_id}-{hunk_id}-{lineno}\" id=\"d{delta_id}-{hunk_id}-{lineno}\" class=\"{class}\">{origin}{line}</a>",
-                    line = EscapedUtf8(line.content()),
+                    line = Escaped(line_content),
                   )?;
                 } else {
-                  write!(&mut f, " {line}", line = EscapedUtf8(line.content()))?;
+                  write!(&mut f, " {line}", line = Escaped(line_content))?;
                 }
               }
               Delta::Added => {
@@ -1116,7 +1114,7 @@ impl<'repo> RepoRenderer<'repo> {
                   &mut f,
                   "<a href=\"#d{delta_id}-{hunk_id}-{lineno}\" id=\"d{delta_id}-{hunk_id}-{lineno}\" class=\"i\">+{line}</a>",
                   lineno = line_id + 1,
-                  line = EscapedUtf8(line.content()),
+                  line = Escaped(line_content),
                 )?;
               }
               Delta::Deleted => {
@@ -1124,7 +1122,7 @@ impl<'repo> RepoRenderer<'repo> {
                   &mut f,
                   "<a href=\"#d{delta_id}-{hunk_id}-{lineno}\" id=\"d{delta_id}-{hunk_id}-{lineno}\" class=\"d\">-{line}</a>",
                   lineno = line_id + 1,
-                  line = EscapedUtf8(line.content()),
+                  line = Escaped(line_content),
                 )?;
               }
               _ => {},
@@ -1455,7 +1453,7 @@ fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
   Ok(())
 }
 
-fn init_repo(
+fn setup_repo(
   repo_path: &PathBuf,
   description: &str,
   private: bool,
@@ -1645,7 +1643,7 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
       }
 
-      if init_repo(&repo_path, &description, cmd.flags.private()).is_err() {
+      if setup_repo(&repo_path, &description, cmd.flags.private()).is_err() {
         return ExitCode::FAILURE;
       }
 
