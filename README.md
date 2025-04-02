@@ -13,14 +13,20 @@ simple feature set:
 
 For a live example please see <https://git.pablopie.xyz>!
 
-### Customizing the HTML Output
-
-The user is expected to modify the source code to customize the HTML output,
-_no templating system is provided_. The idea is that instead of relying in a
-complex and inflexible HTML templating systems, users should fork the
-application to adapt it for their own needs.
-
 ## Usage
+
+yagit maintains a store of Git repositories at `REPOS_DIR/` and
+renders HTML pages for such repositories at the location `OUTPUT_DIR/`.
+
+By default, yagit renders HTML pages in incremental mode: pages for Git
+commits and blobs are only renderer if the relevant commits are newer than the
+page's last modification date. This option can be disabled with the
+`--full-build` flag.
+
+yagit also maintains a store of Git repositories at `PRIVATE_REPOS_DIR/`,
+which can be switched on using the `--private` flag. The HTML pages for
+repositories at `PRIVATE_REPOS_DIR/` are rendered at
+`OUTPUT_PATH/PRIVATE_OUTPUT_ROOT/`.
 
 To render the HTML pages for a single repository using yagit run:
 
@@ -28,23 +34,42 @@ To render the HTML pages for a single repository using yagit run:
 $ yagit render REPO_NAME
 ```
 
-yagit will generate the HTML pages for `REPOS_DIR/REPO_NAME` at
-`OUTPUT_PATH/REPO_NAME`. yagit will also generate an index of all git
-repositories in `REPOS_DIR` at `OUTPUT_PATH/index.html`.
-
 To render HTML pages for all repositories at `REPOS_DIR` run:
 
 ```console
 $ yagit render-batch
 ```
 
+To initiliaze an empty repository at repository store run
+
+```console
+$ yagit init REPO_NAME
+```
+
+For more information check the `yagit.1` man page.
+
+## Configuration
+
+A number of configuration options is provided at compile-time. See
+`src/config.rs`.
+
+### Customizing the HTML Output
+
+The user is expected to modify the source code to customize the HTML output,
+_no templating system is provided_. The idea is that instead of relying in a
+complex and inflexible HTML templating systems, users should fork the
+application to adapt it for their own needs.
+
 ## Installation
 
-yagit can be installed via Cargo by cloning this repository, as in:
+yagit can be installed from source using the following commands:
 
 ```console
 $ git clone git://git.pablopie.xyz/yagit
-$ cargo install --path ./yagit
+$ cargo build --release
+# install -m 755 ./target/release/yagit /usr/bin/yagit
+# install -m 644 ./yagit.1 /usr/share/man/man1/yagit.1
+# mandb
 ```
 
 ### Build Dependencies

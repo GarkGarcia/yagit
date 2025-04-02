@@ -21,14 +21,7 @@ pub const OUTPUT_PATH: &str = "/var/www/git";
 #[cfg(debug_assertions)]
 pub const OUTPUT_PATH: &str = "./site";
 
-
-#[cfg(not(debug_assertions))]
-pub const PRIVATE_OUTPUT_PATH: &str = "/var/www/git/private";
-
-#[cfg(debug_assertions)]
-pub const PRIVATE_OUTPUT_PATH: &str = "./site/private";
-
-pub const PRIVATE_OUTPUT_ROOT: &str = "/private";
+pub const PRIVATE_OUTPUT_ROOT: &str = "private/";
 
 #[cfg(not(debug_assertions))]
 pub const GIT_USER: &str = "git";

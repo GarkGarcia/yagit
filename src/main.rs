@@ -334,7 +334,9 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     let (output_path, output_root) = if flags.private() {
-      (PathBuf::from(config::PRIVATE_OUTPUT_PATH), config::PRIVATE_OUTPUT_ROOT)
+      let mut output_path = PathBuf::from(config::OUTPUT_PATH);
+      output_path.push(config::PRIVATE_OUTPUT_ROOT);
+      (output_path, config::PRIVATE_OUTPUT_ROOT)
     } else {
       (PathBuf::from(config::OUTPUT_PATH), "")
     };
@@ -381,20 +383,20 @@ impl<'repo> RepoRenderer<'repo> {
     }
     writeln!(f, "<nav>")?;
     writeln!(f, "<ul>")?;
-    writeln!(f, "<li{class}><a href=\"{root}/{name}/index.html\">summary</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{root}{name}/index.html\">summary</a></li>",
                 root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::Summary { .. }) { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"{root}/{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{root}{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
                 root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::Log { .. } | PageTitle::Commit { .. }) { " class=\"nav-selected\"" } else { "" })?;
-    writeln!(f, "<li{class}><a href=\"{root}/{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
+    writeln!(f, "<li{class}><a href=\"/{root}{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
                 root = self.output_root,
                 name = Escaped(&self.name),
                 class = if matches!(title, PageTitle::TreeEntry { .. }) { " class=\"nav-selected\"" } else { "" })?;
     if self.license.is_some() {
-      writeln!(f, "<li{class}><a href=\"{root}/{name}/license.html\">license</a></li>",
+      writeln!(f, "<li{class}><a href=\"/{root}{name}/license.html\">license</a></li>",
                   root = self.output_root,
                   name = Escaped(&self.name),
                   class = if matches!(title, PageTitle::License { .. }) { " class=\"nav-selected\"" } else { "" })?;
@@ -518,7 +520,7 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"{root}/{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
+            "<tr><td><a href=\"/{root}{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
             root = self.output_root,
             name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
@@ -541,7 +543,7 @@ impl<'repo> RepoRenderer<'repo> {
 
           writeln!(
             &mut f,
-            "<tr><td><a href=\"{root}/{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
+            "<tr><td><a href=\"/{root}{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
             root = self.output_root,
             name = Escaped(&self.name),
             path = Escaped(&path.to_string_lossy()),
@@ -656,7 +658,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"{root}/{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
+    writeln!(&mut f, "<td><a href=\"/{root}{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
                      root = self.output_root,
                      name = Escaped(&self.name),
                      path = Escaped(&path.to_string_lossy()))?;
@@ -759,7 +761,7 @@ impl<'repo> RepoRenderer<'repo> {
       writeln!(&mut f, "<div>")?;
       writeln!(
         &mut f,
-        "<span class=\"commit-heading\"><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
+        "<span class=\"commit-heading\"><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
         root = self.output_root,
         name = Escaped(&self.name),
       )?;
@@ -927,7 +929,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<dl>")?;
 
     writeln!(&mut f, "<dt>Commit</dt>")?;
-    writeln!(&mut f, "<dd><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+    writeln!(&mut f, "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
                      root = self.output_root,
                      name = Escaped(&self.name), id = commit.id())?;
 
@@ -935,7 +937,7 @@ impl<'repo> RepoRenderer<'repo> {
       writeln!(&mut f, "<dt>Parent</dt>")?;
       writeln!(
         &mut f,
-        "<dd><a href=\"{root}/{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
         root = self.output_root,
         name = Escaped(&self.name),
         id = parent.id()
@@ -1037,7 +1039,7 @@ impl<'repo> RepoRenderer<'repo> {
         Delta::Added => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git /dev/null b/<a href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git /dev/null b/<a href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
             root = self.output_root,
             name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
@@ -1053,7 +1055,7 @@ impl<'repo> RepoRenderer<'repo> {
         _ => {
           writeln!(
             &mut f,
-            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"{root}/{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
+            "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
             root = self.output_root,
             name = Escaped(&self.name),
             new_path = delta_info.new_path.to_string_lossy(),
@@ -1391,20 +1393,17 @@ fn render_footer(f: &mut File) -> io::Result<()> {
 }
 
 fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
-  let output_path = if private {
-    config::PRIVATE_OUTPUT_PATH
-  } else {
-    config::OUTPUT_PATH
-  };
+  let mut path = PathBuf::from(config::OUTPUT_PATH);
+  if private {
+    path.push(config::PRIVATE_OUTPUT_ROOT);
+  }
+  path.push("index.html");
 
   let output_root = if private {
     config::PRIVATE_OUTPUT_ROOT
   } else {
     ""
   };
-
-  let mut path = PathBuf::from(&output_path);
-  path.push("index.html");
 
   let mut f = match File::create(&path) {
     Ok(f)  => f,
@@ -1423,7 +1422,7 @@ fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
     writeln!(&mut f, "<article>")?;
 
     writeln!(&mut f, "<h4>")?;
-    writeln!(&mut f, "<a href=\"{root}/{repo}/index.html\">{repo}</a>",
+    writeln!(&mut f, "<a href=\"/{root}{repo}/index.html\">{repo}</a>",
                      root = output_root,
                      repo = Escaped(&repo.name))?;
     writeln!(&mut f, "</h4>")?;
@@ -1556,8 +1555,8 @@ fn main() -> ExitCode {
       };
 
       info!("Updating global repository index...");
-      if let Err(e) = render_index(&repos, cmd.flags.private()) {
-        errorln!("Failed rendering global repository index: {e}");
+      if render_index(&repos, cmd.flags.private()).is_err() {
+        return ExitCode::FAILURE;
       }
       info_done!();
 

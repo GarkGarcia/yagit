@@ -1,0 +1,71 @@
+.Dd April 2, 2025
+.Dt yagit 1
+.Au Pablo
+.Sh NAME
+.Nm yagit
+.Nd Yet another static site generator for Git
+.Sh SYNOPSIS
+.Nm
+.Op Fl \-\-private
+.Op Fl \-\-full\-build
+render-batch
+.Nm
+.Op Fl \-\-private
+.Op Fl \-\-full\-build
+render
+.Ar repo-name
+.Nm
+.Op Fl \-\-private
+\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ init\ \ 
+.Ar repo-name
+.Sh DESCRIPTION
+.Nm
+maintains a store of Git repositories at
+.Ar REPOS_DIR/
+and renders HTML pages for such repositories at the location
+.Ar OUTPUT_DIR/
+\.
+
+By default,
+.Nm
+renders HTML pages in incremental mode: pages for Git
+commits and blobs are only renderer if the relevant commits are newer than the
+page's last modification date. This option can be disabled with the
+.Fl --full-build
+flag.
+
+.Nm
+also maintains a store of Git repositories at
+.Ar PRIVATE_REPOS_DIR/
+, which can be switched on using the
+.Fl --private
+flag. The HTML pages for repositories at
+.Ar PRIVATE_REPOS_DIR/
+are rendered at
+.Ar OUTPUT_PATH/PRIVATE_OUTPUT_ROOT/
+.Sh COMMANDS
+.Bl -tag -width Ds
+.It \fBrender\-batch\fR
+Renders the HTML pages for all repositories at
+.Ar REPOS_DIR/
+and updates the index page
+.It \fBrender\fR Ar repo\-name
+Renders the HTML pages for a repository at
+.Ar REPOS_DIR/repo\-name
+and updates the index page
+.It \fBinit\fR Ar repo\-name
+Initializes a bare Git repo at
+.Ar REPOS_DIR/repo\-name
+.El
+.Sh FLAGS
+.Bl -tag -width Ds
+.It Fl --full-build
+Disables incremental builds (re\-renders all HTML pages)
+.It Fl --private
+Use the
+.Ar PRIVATE_REPOS_DIR/
+store instead of
+.Ar REPOS_DIR/
+.El
+.Sh AUTHORS
+.An Pablo Aq Mt pablo-pie@riseup.net

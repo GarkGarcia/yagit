@@ -9,6 +9,7 @@ const BOLD_WHITE:  &str = "\u{001b}[1;37m";
 const BOLD_BLUE:   &str = "\u{001b}[1;34m";
 const BOLD_RED:    &str = "\u{001b}[1;31m";
 const BOLD_YELLOW: &str = "\u{001b}[1;33m";
+const UNDERLINE:   &str = "\u{001b}[4m";
 const RESET:       &str = "\u{001b}[0m";
 
 static mut NEEDS_NEWLINE: bool = false;
@@ -23,6 +24,7 @@ pub(crate) enum Level {
   Error,
   Info,
   Warn,
+  Usage,
 }
 
 struct Counter {
@@ -75,6 +77,23 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>, newline: bool) {
       let _ = write!(stdout, "{BOLD_YELLOW}WARNING:{RESET} ");
       if newline {
         let _ = writeln!(stdout, "{}", args);
+        log_job_counter();
+      } else {
+        let _ = write!(stdout, "{}", args);
+      }
+      if !newline { let _ = stdout.flush(); }
+    }
+    Level::Usage => unsafe {
+      let mut stdout = io::stdout();
+
+      if NEEDS_NEWLINE {
+        let _ = writeln!(stdout);
+      }
+
+      let _ = write!(stdout, "{BOLD_YELLOW}USAGE:{RESET} ");
+      if newline {
+        let _ = writeln!(stdout, "{}", args);
+        let _ = writeln!(stdout, "       For more information check the {UNDERLINE}yagit{RESET} man page.");
         log_job_counter();
       } else {
         let _ = write!(stdout, "{}", args);
@@ -174,11 +193,12 @@ macro_rules! infoln {
 
 #[macro_export]
 macro_rules! info_done {
+  // info_done!();
   () => ({
     $crate::log::info_done(None);
   });
 
-  // infoln!("a {} event", "log");
+  // info_done!("terminator");
   ($($arg:tt)+) => ({
     $crate::log::info_done(Some(&std::format_args!($($arg)+)));
   });
@@ -200,7 +220,7 @@ macro_rules! job_counter_increment {
 
 #[macro_export]
 macro_rules! error {
-  // info!("a {} event", "log");
+  // error!("a {} event", "log");
   ($($arg:tt)+) => ({
     $crate::log::log(
       $crate::log::Level::Error,
@@ -224,7 +244,7 @@ macro_rules! errorln {
 
 #[macro_export]
 macro_rules! warnln {
-  // info!("a {} event", "log");
+  // warnln!("a {} event", "log");
   ($($arg:tt)+) => ({
     $crate::log::log(
       $crate::log::Level::Warn,
@@ -234,11 +254,14 @@ macro_rules! warnln {
   });
 }
 
-pub fn usage(program_name: &str) {
-  let mut stderr = io::stderr();
-  let _ = writeln!(
-    stderr,
-    r#"{BOLD_YELLOW}USAGE:{RESET} {program_name} render       REPO_PATH  OUTPUT_PATH
-       {program_name} render-batch BATCH_PATH OUTPUT_PATH"#
-  );
+#[macro_export]
+macro_rules! usageln {
+  // usageln!("a {} event", "log");
+  ($($arg:tt)+) => ({
+    $crate::log::log(
+      $crate::log::Level::Usage,
+      &std::format_args!($($arg)+),
+      true,
+    );
+  });
 }
