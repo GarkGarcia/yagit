@@ -1347,7 +1347,7 @@ fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
 
   match title {
     PageTitle::Index => {
-      writeln!(f, "<title>Repositories</title>")?;
+      writeln!(f, "<title>personal projects</title>")?;
     }
     PageTitle::Summary { repo_name }=> {
       writeln!(f, "<title>{repo}</title>", repo = Escaped(repo_name))?;
@@ -1388,7 +1388,7 @@ fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
 
 fn render_footer(f: &mut File) -> io::Result<()> {
   writeln!(f, "<footer>")?;
-  writeln!(f, "made with ❤️ by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
+  writeln!(f, "made with 💛 by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
   writeln!(f, "</footer>")
 }
 
