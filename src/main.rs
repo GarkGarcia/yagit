@@ -1453,13 +1453,14 @@ fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
 }
 
 fn setup_repo(
-  repo_path: &PathBuf,
+  name: &str,
+  path: &Path,
   description: &str,
   private: bool,
 ) -> io::Result<()> {
   const HOOK_MODE: u32 = 0o755;
 
-  let mut owner_path = repo_path.clone();
+  let mut owner_path = path.to_path_buf();
   owner_path.push("owner");
 
   let mut owner_f = match File::create(&owner_path) {
@@ -1472,7 +1473,7 @@ fn setup_repo(
 
   write!(&mut owner_f, "{}", config::OWNER.trim())?;
 
-  let mut dsc_path = repo_path.clone();
+  let mut dsc_path = path.to_path_buf();
   dsc_path.push("description");
 
   let mut dsc_f = match File::create(&dsc_path) {
@@ -1485,7 +1486,7 @@ fn setup_repo(
 
   write!(&mut dsc_f, "{}", description)?;
 
-  let mut hook_path = repo_path.clone();
+  let mut hook_path = path.to_path_buf();
   hook_path.push("hooks");
   hook_path.push("post-update");
 
@@ -1499,9 +1500,9 @@ fn setup_repo(
 
   writeln!(&mut hook_f, "#!/bin/sh")?;
   if private {
-    writeln!(&mut hook_f, "yagit --private render {repo_path:?}")?;
+    writeln!(&mut hook_f, "yagit --private render {name:?}")?;
   } else {
-    writeln!(&mut hook_f, "yagit render {repo_path:?}")?;
+    writeln!(&mut hook_f, "yagit render {name:?}")?;
   }
 
   let mut mode = hook_f.metadata()?.permissions();
@@ -1642,7 +1643,8 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
       }
 
-      if setup_repo(&repo_path, &description, cmd.flags.private()).is_err() {
+      if setup_repo(&repo_name, &repo_path, &description, cmd.flags.private())
+        .is_err() {
         return ExitCode::FAILURE;
       }
 
