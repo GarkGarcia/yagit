@@ -51,7 +51,7 @@ For more information check the `yagit.1` man page.
 ## Configuration
 
 A number of configuration options is provided at compile-time. See
-`src/config.rs`.
+`config.toml`.
 
 ### Customizing the HTML Output
 

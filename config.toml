@@ -1,0 +1,23 @@
+[output]
+tree_subdir         = "tree"
+blob_subdir         = "blob"
+commit_subdir       = "commit"
+private_output_root = "private/"
+
+[output.release]
+path = "/var/www/git"
+
+[output.debug]
+path = "./site"
+
+[git]
+store_owner = "Pablo"
+user = "git"
+
+[git.release]
+store_path         = "/var/git/public"  # path to the public  repo store
+private_store_path = "/var/git/private" # path to the private repo store
+
+[git.debug]
+store_path         = "./test/public"  # path to the public  repo store
+private_store_path = "./test/private" # path to the private repo store

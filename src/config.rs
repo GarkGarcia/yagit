@@ -1,33 +1,30 @@
 //! Compile-time configuration keys
-// TODO: [feature]: read this from a TOML file at build-time?
+
+static_toml::static_toml! {
+  static CONFIG = include_toml!("config.toml");
+}
 
 #[cfg(not(debug_assertions))]
-pub const REPOS_DIR: &str = "/var/git/public";
+pub const OUTPUT_PATH: &str = CONFIG.output.release.path;
 
 #[cfg(debug_assertions)]
-pub const REPOS_DIR: &str = "./test/public";
+pub const OUTPUT_PATH: &str = CONFIG.output.debug.path;
 
+pub const TREE_SUBDIR:         &str = CONFIG.output.tree_subdir;
+pub const BLOB_SUBDIR:         &str = CONFIG.output.blob_subdir;
+pub const COMMIT_SUBDIR:       &str = CONFIG.output.commit_subdir;
+pub const PRIVATE_OUTPUT_ROOT: &str = CONFIG.output.private_output_root;
 
 #[cfg(not(debug_assertions))]
-pub const PRIVATE_REPOS_DIR: &str = "/var/git/private";
+pub const GIT_USER: &str = CONFIG.git.user;
+pub const OWNER: &str = CONFIG.git.store_owner;
 
 #[cfg(debug_assertions)]
-pub const PRIVATE_REPOS_DIR: &str = "./test/private";
-
-
-#[cfg(not(debug_assertions))]
-pub const OUTPUT_PATH: &str = "/var/www/git";
-
+pub const STORE_PATH:         &str = CONFIG.git.debug.store_path;
 #[cfg(debug_assertions)]
-pub const OUTPUT_PATH: &str = "./site";
-
-pub const PRIVATE_OUTPUT_ROOT: &str = "private/";
+pub const PRIVATE_STORE_PATH: &str = CONFIG.git.debug.private_store_path;
 
 #[cfg(not(debug_assertions))]
-pub const GIT_USER: &str = "git";
-
-pub const OWNER: &str = "Pablo";
-
-pub const TREE_SUBDIR:   &str = "tree";
-pub const BLOB_SUBDIR:   &str = "blob";
-pub const COMMIT_SUBDIR: &str = "commit";
+pub const STORE_PATH:         &str = CONFIG.git.release.store_path;
+#[cfg(not(debug_assertions))]
+pub const PRIVATE_STORE_PATH: &str = CONFIG.git.release.private_store_path;

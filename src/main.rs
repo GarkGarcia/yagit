@@ -189,9 +189,9 @@ impl RepoInfo {
   /// `config::PRIVATE_REPOS_DIR`.
   fn index(private: bool) -> Result<Vec<Self>, ()> {
     let repos_dir = if private {
-      config::PRIVATE_REPOS_DIR
+      config::PRIVATE_STORE_PATH
     } else {
-      config::REPOS_DIR
+      config::STORE_PATH
     };
 
     match fs::read_dir(repos_dir) {
@@ -1542,9 +1542,9 @@ fn main() -> ExitCode {
   }
 
   let repos_dir = if cmd.flags.private() {
-    config::PRIVATE_REPOS_DIR
+    config::PRIVATE_STORE_PATH
   } else {
-    config::REPOS_DIR
+    config::STORE_PATH
   };
 
   match cmd.sub_cmd {
@@ -1627,9 +1627,9 @@ fn main() -> ExitCode {
     }
     SubCmd::Init { repo_name, description } => {
       let mut repo_path = if cmd.flags.private() {
-        PathBuf::from(config::PRIVATE_REPOS_DIR)
+        PathBuf::from(config::PRIVATE_STORE_PATH)
       } else {
-        PathBuf::from(config::REPOS_DIR)
+        PathBuf::from(config::STORE_PATH)
       };
       repo_path.push(&repo_name);
 
