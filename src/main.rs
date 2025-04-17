@@ -30,6 +30,9 @@ use time::{DateTime, Date, FullDate};
 use command::{Cmd, SubCmd, Flags};
 use config::{TREE_SUBDIR, BLOB_SUBDIR, COMMIT_SUBDIR};
 
+#[cfg(not(debug_assertions))]
+use std::borrow::Cow;
+
 #[macro_use]
 mod log;
 
@@ -1458,9 +1461,11 @@ fn setup_repo(
   description: &str,
   private: bool,
 ) -> io::Result<()> {
-  const HOOK_MODE: u32 = 0o755;
+  let mut path = path.to_path_buf();
+  path.push(".git");
 
-  let mut owner_path = path.to_path_buf();
+  // ==========================================================================
+  let mut owner_path = path.clone();
   owner_path.push("owner");
 
   let mut owner_f = match File::create(&owner_path) {
@@ -1473,7 +1478,8 @@ fn setup_repo(
 
   write!(&mut owner_f, "{}", config::OWNER.trim())?;
 
-  let mut dsc_path = path.to_path_buf();
+  // ==========================================================================
+  let mut dsc_path = path.clone();
   dsc_path.push("description");
 
   let mut dsc_f = match File::create(&dsc_path) {
@@ -1486,7 +1492,8 @@ fn setup_repo(
 
   write!(&mut dsc_f, "{}", description)?;
 
-  let mut hook_path = path.to_path_buf();
+  // ==========================================================================
+  let mut hook_path = path.clone();
   hook_path.push("hooks");
   hook_path.push("post-update");
 
@@ -1505,6 +1512,7 @@ fn setup_repo(
     writeln!(&mut hook_f, "yagit render {name:?}")?;
   }
 
+  const HOOK_MODE: u32 = 0o755;
   let mut mode = hook_f.metadata()?.permissions();
   mode.set_mode(HOOK_MODE);
 
@@ -1514,7 +1522,39 @@ fn setup_repo(
     return Err(e);
   }
 
+  // ==========================================================================
+  // make it possible to push to the repo, eventhough it's not a bare repo
+  let mut config_path = path;
+  config_path.push("config");
+
+  let mut config_opts = fs::OpenOptions::new();
+  config_opts.append(true).create(true);
+
+  let mut config_f = match config_opts.open(&config_path) {
+    Ok(f)  => f,
+    Err(e) => {
+      errorln!("Failed to create {config_path:?}: {e}");
+      return Err(e);
+    }
+  };
+
+  writeln!(&mut config_f, "[receive]")?;
+  writeln!(&mut config_f, "\tdenyCurrentBranch = updateInstead")?;
+
   Ok(())
+}
+
+#[cfg(not(debug_assertions))]
+fn getuser<'a>() -> Cow<'a, str> {
+  use std::ffi::CStr;
+
+  unsafe {
+    let uid = libc::getuid();
+    let pw = libc::getpwuid(uid);
+    assert!(!pw.is_null());
+
+    CStr::from_ptr((*pw).pw_name).to_string_lossy()
+  }
 }
 
 fn main() -> ExitCode {
@@ -1526,15 +1566,10 @@ fn main() -> ExitCode {
   };
 
   #[cfg(not(debug_assertions))]
-  unsafe {
-    use std::ffi::CStr;
+  {
     use config::GIT_USER;
 
-    let uid = libc::getuid();
-    let pw = libc::getpwuid(uid);
-    assert!(!pw.is_null());
-
-    let user = CStr::from_ptr((*pw).pw_name).to_string_lossy();
+    let user = getuser();
     if user != GIT_USER {
       errorln!("Running {program_name} as the {user:?} user. Re-run as {GIT_USER:?}");
       return ExitCode::FAILURE;
@@ -1634,7 +1669,7 @@ fn main() -> ExitCode {
       repo_path.push(&repo_name);
 
       let mut opts = RepositoryInitOptions::new();
-      opts.bare(true).no_reinit(true);
+      opts.bare(false).no_reinit(true);
 
       info!("Initializing empty {repo_name:?} repository in {repo_path:?}...");
 
