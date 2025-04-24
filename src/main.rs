@@ -1379,10 +1379,11 @@ fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
   writeln!(f, "<body>")?;
   writeln!(f, "<header>")?;
   writeln!(f, "<nav>")?;
-  writeln!(f, "<a href=\"/index.html\">")?;
   writeln!(f, "<img aria-hidden=\"true\" alt=\"Website logo\" src=\"/favicon.svg\">")?;
-  writeln!(f, "git.pablopie.xyz")?;
-  writeln!(f, "</a>")?;
+  writeln!(f, "<ul>")?;
+  writeln!(f, "<li><strong><a href=\"https://pablopie.xyz\">pablo</a></strong></li>")?;
+  writeln!(f, "<li><a href=\"/\">projects</a></li>")?;
+  writeln!(f, "</ul>")?;
   writeln!(f, "</nav>")?;
   writeln!(f, "</header>")?;
 
@@ -1391,7 +1392,7 @@ fn render_header(f: &mut File, title: PageTitle<'_>) -> io::Result<()> {
 
 fn render_footer(f: &mut File) -> io::Result<()> {
   writeln!(f, "<footer>")?;
-  writeln!(f, "made with 💛 by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
+  writeln!(f, "made with ❤️ by <a rel=\"author\" href=\"https://pablopie.xyz/\">@pablo</a>")?;
   writeln!(f, "</footer>")
 }
 
