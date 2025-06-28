@@ -3,6 +3,10 @@
 /site
 Cargo.lock
 
+<<<<<<< HEAD
 /profiling
+=======
+flamegraph.svg
+>>>>>>> 899488f (Minor changes in Cargo.toml to allow profiling)
 perf.data
 perf.data.old
