@@ -10,7 +10,7 @@ static ESCAPE_TABLE: [Option<&str>; 256] = create_html_escape_table();
 /// A wrapper for HTML-escaped strings
 pub struct Escaped<'a>(pub &'a str);
 
-// stolen from pulldown-cmark-escape
+// Stolen from pulldown-cmark-escape
 impl Display for Escaped<'_> {
   #[cfg(target_arch = "x86_64")]
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -31,19 +31,34 @@ impl Display for Escaped<'_> {
   }
 }
 
+// Stolen from pulldown-cmark-escape
 fn fmt_escaped_html_scalar(
   s: &str,
   f: &mut fmt::Formatter<'_>
 ) -> fmt::Result {
-  for c in s.chars() {
-    if let Some(replacement) = ESCAPE_TABLE[c as usize] {
-      f.write_str(replacement)?;
+  let bytes = s.as_bytes();
+  let mut mark = 0;
+  let mut i = 0;
+
+  while i < s.len() {
+    let next_escaped = bytes[i..]
+      .iter()
+      .enumerate()
+      .find_map(|(offset, c)| Some((offset, ESCAPE_TABLE[*c as usize]?)));
+
+    if let Some((offset, escape_seq)) = next_escaped {
+      i += offset;
+      f.write_str(&s[mark..i])?;
+      f.write_str(escape_seq)?;
+
+      i += 1;
+      mark = i; // all escaped characters are ASCII
     } else {
-      c.fmt(f)?;
+      break;
     }
   }
 
-  Ok(())
+  f.write_str(&s[mark..])
 }
 
 const fn create_html_escape_table() -> [Option<&'static str>; 256] {
