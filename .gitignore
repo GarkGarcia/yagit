@@ -2,3 +2,7 @@
 /test
 /site
 Cargo.lock
+
+/profiling
+perf.data
+perf.data.old
