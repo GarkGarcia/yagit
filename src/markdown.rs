@@ -9,6 +9,7 @@ struct State {
 }
 
 // Addapted from pulldown_cmark/html.rs
+// <https://github.com/pulldown-cmark/pulldown-cmark/>
 pub fn render_html<W: Write>(w: &mut W, src: &String) -> io::Result<()> {
   let mut opt = Options::empty();
   opt.insert(Options::ENABLE_TABLES);
@@ -62,6 +63,7 @@ pub fn render_html<W: Write>(w: &mut W, src: &String) -> io::Result<()> {
 }
 
 // Addapted from pulldown_cmark/html.rs
+// <https://github.com/pulldown-cmark/pulldown-cmark/>
 /// Returns `Ok(t)` if successful,
 /// where `t` indicates whether or not we are in a non-writting block
 fn start_tag<W: Write>(

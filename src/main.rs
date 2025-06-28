@@ -29,6 +29,7 @@ use git2::{
 use time::{DateTime, Date, FullDate};
 use command::{Cmd, SubCmd, Flags};
 use config::{TREE_SUBDIR, BLOB_SUBDIR, COMMIT_SUBDIR};
+use escape::Escaped;
 
 #[cfg(not(debug_assertions))]
 use std::borrow::Cow;
@@ -36,6 +37,7 @@ use std::borrow::Cow;
 #[macro_use]
 mod log;
 
+mod escape;
 mod markdown;
 mod time;
 mod command;
@@ -43,27 +45,6 @@ mod config;
 
 const README_NAMES: &[&str] = &["README", "README.txt", "README.md"];
 const LICENSE_NAME: &str    = "LICENSE";
-
-/// A wrapper for HTML-escaped strings
-struct Escaped<'a>(pub &'a str);
-
-impl Display for Escaped<'_> {
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
-    // TODO: [optimize]: use SIMD for this?
-    for c in self.0.chars() {
-      match c {
-        '<'  => write!(f, "&lt;")?,
-        '>'  => write!(f, "&gt;")?,
-        '&'  => write!(f, "&amp;")?,
-        '"'  => write!(f, "&quot;")?,
-        '\'' => write!(f, "&apos;")?,
-        c    => c.fmt(f)?,
-      }
-    }
-
-    Ok(())
-  }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PageTitle<'a> {
