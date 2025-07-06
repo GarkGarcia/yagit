@@ -646,8 +646,7 @@ impl<'repo> RepoRenderer<'repo> {
                      root = self.output_root,
                      name = Escaped(&self.name),
                      path = Escaped(&path.to_string_lossy()))?;
-    // TODO: [feature]: print the size differently for larger blobs?
-    writeln!(&mut f, "<td align=\"right\">{}B</td>", blob.size())?;
+    writeln!(&mut f, "<td align=\"right\">{}</td>", FileSize(blob.size()))?;
     writeln!(&mut f, "<td align=\"right\">{}</td>", mode)?;
     writeln!(&mut f, "</tr>")?;
     writeln!(&mut f, "</tbody>")?;
@@ -1202,6 +1201,27 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</html>")?;
 
     Ok(())
+  }
+}
+
+#[derive(Clone, Copy)]
+struct FileSize(usize);
+
+impl Display for FileSize {
+  // TODO: [feature]: print LOC instead of file size for text files?
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    const KIBI: usize = 1024;
+    const MEBI: usize = KIBI * 1024;
+
+    let size = self.0;
+
+    if size < KIBI {
+      write!(f, "{}B", size)
+    } else if size < MEBI {
+      write!(f, "{}KB", size/MEBI)
+    } else {
+      write!(f, "{}MB", size/KIBI)
+    }
   }
 }
 
