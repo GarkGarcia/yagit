@@ -33,10 +33,7 @@ pub enum SubCmd {
 }
 
 impl Cmd {
-  pub fn parse() -> Result<(Self, String), ()> {
-    let mut args = env::args();
-    let program_name = args.next().unwrap();
-
+  pub fn parse(args: &mut env::Args, program_name: &str) -> Result<Self, ()> {
     let mut flags = Flags::EMPTY;
     let tag = loop {
       match args.next() {
@@ -53,17 +50,17 @@ impl Cmd {
 
         Some(arg) if arg.starts_with("--") => {
           errorln!("Unknown flag {arg:?}");
-          usage(&program_name, None);
+          usage(program_name, None);
           return Err(());
         }
         Some(arg) => {
           errorln!("Unknown subcommand {arg:?}");
-          usage(&program_name, None);
+          usage(program_name, None);
           return Err(());
         }
         None => {
           errorln!("No subcommand provided");
-          usage(&program_name, None);
+          usage(program_name, None);
           return Err(());
         }
       }
@@ -78,7 +75,7 @@ impl Cmd {
           name
         } else {
           errorln!("No repository name providade");
-          usage(&program_name, Some(tag));
+          usage(program_name, Some(tag));
           return Err(());
         };
 
@@ -89,7 +86,7 @@ impl Cmd {
           name
         } else {
           errorln!("No repository name providade");
-          usage(&program_name, Some(tag));
+          usage(program_name, Some(tag));
           return Err(());
         };
 
@@ -97,7 +94,7 @@ impl Cmd {
           dsc
         } else {
           errorln!("No description providade");
-          usage(&program_name, Some(tag));
+          usage(program_name, Some(tag));
           return Err(());
         };
 
@@ -107,10 +104,10 @@ impl Cmd {
 
     if args.next().is_some() {
       warnln!("Additional command line arguments provided. Ignoring trailing arguments...");
-      usage(&program_name, Some(tag));
+      usage(program_name, Some(tag));
     }
 
-    Ok((Self { sub_cmd, flags, }, program_name))
+    Ok(Self { sub_cmd, flags, })
   }
 }
 

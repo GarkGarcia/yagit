@@ -3,10 +3,11 @@ use std::{
   fs::{self, File},
   path::{Path, PathBuf},
   mem,
+  env,
   fmt::{self, Display},
   ffi::OsStr,
   collections::HashMap,
-  time::{Duration, SystemTime},
+  time::{Duration, SystemTime, Instant},
   process::ExitCode,
   os::unix::fs::PermissionsExt,
   cmp,
@@ -221,10 +222,10 @@ struct Readme {
 }
 
 struct RepoRenderer<'repo> {
-  pub name:        String,
-  pub description: Option<String>,
+  pub name:        &'repo str,
+  pub description: Option<&'repo str>,
 
-  pub repo:   Repository,
+  pub repo:   &'repo Repository,
   pub head:   Tree<'repo>,
   pub branch: String,
 
@@ -239,7 +240,7 @@ struct RepoRenderer<'repo> {
 }
 
 impl<'repo> RepoRenderer<'repo> {
-  fn new(repo: RepoInfo, flags: Flags) -> Result<Self, ()> {
+  fn new(repo: &'repo RepoInfo, flags: Flags) -> Result<Self, ()> {
     let (head, branch) = {
       match repo.repo.head() {
         Ok(head) => unsafe {
@@ -326,10 +327,10 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     Ok(Self {
-      name: repo.name,
-      description: repo.description,
+      name: &repo.name,
+      description: repo.description.as_deref(),
 
-      repo: repo.repo,
+      repo: &repo.repo,
       head,
       branch,
 
@@ -361,28 +362,28 @@ impl<'repo> RepoRenderer<'repo> {
   ) -> io::Result<()> {
     render_header(f, title)?;
     writeln!(f, "<main>")?;
-    writeln!(f, "<h1>{title}</h1>", title = Escaped(&self.name))?;
-    if let Some(ref description) = self.description {
+    writeln!(f, "<h1>{title}</h1>", title = Escaped(self.name))?;
+    if let Some(description) = self.description {
       writeln!(f, "<p>\n{d}\n</p>", d = Escaped(description.trim()))?;
     }
     writeln!(f, "<nav>")?;
     writeln!(f, "<ul>")?;
     writeln!(f, "<li{class}><a href=\"/{root}{name}/index.html\">summary</a></li>",
                 root = self.output_root,
-                name = Escaped(&self.name),
+                name = Escaped(self.name),
                 class = if matches!(title, PageTitle::Summary { .. }) { " class=\"nav-selected\"" } else { "" })?;
     writeln!(f, "<li{class}><a href=\"/{root}{name}/{COMMIT_SUBDIR}/index.html\">log</a></li>",
                 root = self.output_root,
-                name = Escaped(&self.name),
+                name = Escaped(self.name),
                 class = if matches!(title, PageTitle::Log { .. } | PageTitle::Commit { .. }) { " class=\"nav-selected\"" } else { "" })?;
     writeln!(f, "<li{class}><a href=\"/{root}{name}/{TREE_SUBDIR}/index.html\">tree</a></li>",
                 root = self.output_root,
-                name = Escaped(&self.name),
+                name = Escaped(self.name),
                 class = if matches!(title, PageTitle::TreeEntry { .. }) { " class=\"nav-selected\"" } else { "" })?;
     if self.license.is_some() {
       writeln!(f, "<li{class}><a href=\"/{root}{name}/license.html\">license</a></li>",
                   root = self.output_root,
-                  name = Escaped(&self.name),
+                  name = Escaped(self.name),
                   class = if matches!(title, PageTitle::License { .. }) { " class=\"nav-selected\"" } else { "" })?;
     }
     writeln!(f, "</ul>")?;
@@ -426,7 +427,7 @@ impl<'repo> RepoRenderer<'repo> {
     blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf)>,
   ) -> io::Result<()> {
     let mut blobs_path = self.output_path.clone();
-    blobs_path.push(&self.name);
+    blobs_path.push(self.name);
     blobs_path.push(BLOB_SUBDIR);
     blobs_path.extend(&parent);
 
@@ -435,7 +436,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     let mut index_path = self.output_path.clone();
-    index_path.push(&self.name);
+    index_path.push(self.name);
     index_path.push(TREE_SUBDIR);
     index_path.extend(&parent);
 
@@ -456,7 +457,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     self.render_header(
       &mut f,
-      PageTitle::TreeEntry { repo_name: &self.name, path: &parent },
+      PageTitle::TreeEntry { repo_name: self.name, path: &parent },
     )?;
     writeln!(&mut f, "<div class=\"table-container\">")?;
     writeln!(&mut f, "<table>")?;
@@ -479,13 +480,13 @@ impl<'repo> RepoRenderer<'repo> {
       match entry.kind() {
         Some(ObjectType::Blob) => {
           let blob = entry
-            .to_object(&self.repo)
+            .to_object(self.repo)
             .unwrap()
             .peel_to_blob()
             .unwrap();
 
           let mut blob_path = self.output_path.clone();
-          blob_path.push(&self.name);
+          blob_path.push(self.name);
           blob_path.push(BLOB_SUBDIR);
           blob_path.extend(&path);
 
@@ -506,7 +507,7 @@ impl<'repo> RepoRenderer<'repo> {
             &mut f,
             "<tr><td><a href=\"/{root}{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
             root = self.output_root,
-            name = Escaped(&self.name),
+            name = Escaped(self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
 
@@ -520,7 +521,7 @@ impl<'repo> RepoRenderer<'repo> {
         }
         Some(ObjectType::Tree) => {
           let subtree = entry
-            .to_object(&self.repo)
+            .to_object(self.repo)
             .unwrap()
             .peel_to_tree()
             .unwrap();
@@ -529,7 +530,7 @@ impl<'repo> RepoRenderer<'repo> {
             &mut f,
             "<tr><td><a href=\"/{root}{name}/{TREE_SUBDIR}/{path}/index.html\" class=\"subtree\">{path}/</a></td></tr>",
             root = self.output_root,
-            name = Escaped(&self.name),
+            name = Escaped(self.name),
             path = Escaped(&path.to_string_lossy()),
           )?;
 
@@ -593,7 +594,7 @@ impl<'repo> RepoRenderer<'repo> {
     last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
     let mut page_path = self.output_path.clone();
-    page_path.push(&self.name);
+    page_path.push(self.name);
     page_path.push(TREE_SUBDIR);
     page_path.extend(&path);
     let page_path = format!("{}.html", page_path.to_string_lossy());
@@ -622,7 +623,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     self.render_header(
       &mut f,
-      PageTitle::TreeEntry { repo_name: &self.name, path: &path },
+      PageTitle::TreeEntry { repo_name: self.name, path: &path },
     )?;
 
     writeln!(&mut f, "<div class=\"table-container\">")?;
@@ -644,7 +645,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<tr>")?;
     writeln!(&mut f, "<td><a href=\"/{root}{name}/{BLOB_SUBDIR}/{path}\">{path}</a></td>",
                      root = self.output_root,
-                     name = Escaped(&self.name),
+                     name = Escaped(self.name),
                      path = Escaped(&path.to_string_lossy()))?;
     writeln!(&mut f, "<td align=\"right\">{}</td>", FileSize(blob.size()))?;
     writeln!(&mut f, "<td align=\"right\">{}</td>", mode)?;
@@ -704,7 +705,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     // ========================================================================
     let mut index_path = self.output_path.clone();
-    index_path.push(&self.name);
+    index_path.push(self.name);
     index_path.push(COMMIT_SUBDIR);
 
     if !index_path.is_dir() {
@@ -721,7 +722,7 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
-    self.render_header(&mut f, PageTitle::Log { repo_name: &self.name })?;
+    self.render_header(&mut f, PageTitle::Log { repo_name: self.name })?;
     writeln!(&mut f, "<div class=\"article-list\">")?;
 
     for commit in &commits {
@@ -746,7 +747,7 @@ impl<'repo> RepoRenderer<'repo> {
         &mut f,
         "<span class=\"commit-heading\"><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{shorthand_id}</a> &mdash; {author}</span>",
         root = self.output_root,
-        name = Escaped(&self.name),
+        name = Escaped(self.name),
       )?;
       writeln!(&mut f, "<time datetime=\"{datetime}\">{date}</time>",
                        datetime  = DateTime(time), date = Date(time))?;
@@ -779,7 +780,7 @@ impl<'repo> RepoRenderer<'repo> {
     last_commit_time: &mut HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
     let mut path = self.output_path.clone();
-    path.push(&self.name);
+    path.push(self.name);
     path.push(COMMIT_SUBDIR);
     path.push(format!("{}.html", commit.id()));
     let should_skip = !self.full_build && path.exists();
@@ -905,7 +906,7 @@ impl<'repo> RepoRenderer<'repo> {
 
     self.render_header(
       &mut f,
-      PageTitle::Commit { repo_name: &self.name, summary }
+      PageTitle::Commit { repo_name: self.name, summary }
     )?;
 
     writeln!(&mut f, "<article class=\"commit\">")?;
@@ -914,7 +915,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<dt>Commit</dt>")?;
     writeln!(&mut f, "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
                      root = self.output_root,
-                     name = Escaped(&self.name), id = commit.id())?;
+                     name = Escaped(self.name), id = commit.id())?;
 
     if let Ok(ref parent) = commit.parent(0) {
       writeln!(&mut f, "<dt>Parent</dt>")?;
@@ -922,7 +923,7 @@ impl<'repo> RepoRenderer<'repo> {
         &mut f,
         "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
         root = self.output_root,
-        name = Escaped(&self.name),
+        name = Escaped(self.name),
         id = parent.id()
       )?;
     }
@@ -1024,7 +1025,7 @@ impl<'repo> RepoRenderer<'repo> {
             &mut f,
             "<pre><b>diff --git /dev/null b/<a href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
             root = self.output_root,
-            name = Escaped(&self.name),
+            name = Escaped(self.name),
             new_path = delta_info.new_path.to_string_lossy(),
           )?;
         }
@@ -1040,7 +1041,7 @@ impl<'repo> RepoRenderer<'repo> {
             &mut f,
             "<pre><b>diff --git a/<a id=\"d#{delta_id}\" href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{old_path}</a> b/<a href=\"/{root}{name}/{TREE_SUBDIR}/{new_path}.html\">{new_path}</a></b>",
             root = self.output_root,
-            name = Escaped(&self.name),
+            name = Escaped(self.name),
             new_path = delta_info.new_path.to_string_lossy(),
             old_path = delta_info.old_path.to_string_lossy(),
           )?;
@@ -1131,7 +1132,7 @@ impl<'repo> RepoRenderer<'repo> {
 
   fn render_summary(&self) -> io::Result<()> {
     let mut path = self.output_path.clone();
-    path.push(&self.name);
+    path.push(self.name);
 
     fs::create_dir_all(&path)?;
     path.push("index.html");
@@ -1145,7 +1146,7 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     // ========================================================================
-    self.render_header(&mut f, PageTitle::Summary { repo_name: &self.name })?;
+    self.render_header(&mut f, PageTitle::Summary { repo_name: self.name })?;
 
     writeln!(&mut f, "<ul>")?;
     writeln!(&mut f, "<li>refs: {branch}</li>",
@@ -1153,7 +1154,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(
       &mut f,
       "<li>git clone: <a href=\"git://git.pablopie.xyz/{name}\">git://git.pablopie.xyz/{name}</a></li>",
-      name = Escaped(&self.name),
+      name = Escaped(self.name),
     )?;
     writeln!(&mut f, "</ul>")?;
 
@@ -1178,7 +1179,7 @@ impl<'repo> RepoRenderer<'repo> {
 
   pub fn render_license(&self, license: &str) -> io::Result<()> {
     let mut path = self.output_path.clone();
-    path.push(&self.name);
+    path.push(self.name);
     path.push("license.html");
 
     let mut f = match File::create(&path) {
@@ -1190,7 +1191,7 @@ impl<'repo> RepoRenderer<'repo> {
     };
 
     // ========================================================================
-    self.render_header(&mut f, PageTitle::License { repo_name: &self.name })?;
+    self.render_header(&mut f, PageTitle::License { repo_name: self.name })?;
     writeln!(&mut f, "<section id=\"license\">")?;
     writeln!(&mut f, "<pre>{}</pre>", Escaped(license))?;
     writeln!(&mut f, "</section>")?;
@@ -1560,8 +1561,13 @@ fn getuser<'a>() -> Cow<'a, str> {
 }
 
 fn main() -> ExitCode {
-  #[allow(unused_variables)]
-  let (cmd, program_name) = if let Ok(cmd) = Cmd::parse() {
+  let mut args = env::args();
+  let program_name = args.next().unwrap();
+
+  let start = Instant::now();
+  log::version(&program_name);
+
+  let cmd = if let Ok(cmd) = Cmd::parse(&mut args, &program_name) {
     cmd
   } else {
     return ExitCode::FAILURE;
@@ -1592,32 +1598,31 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
       };
 
-      info!("Updating global repository index...");
+      let n_repos = repos.len();
+      infoln!("Updating pages for git repositories in {repos_dir:?}");
+      log::set_job_count(n_repos+1); // tasks: render index + render each repo
+
+      log::render_start("repository index");
       if render_index(&repos, cmd.flags.private()).is_err() {
         return ExitCode::FAILURE;
       }
-      info_done!();
+      log::render_done();
 
-      let n_repos = repos.len();
-      job_counter_start!(n_repos);
-      infoln!("Updating pages for git repositories in {repos_dir:?}...");
       for repo in repos {
-        job_counter_increment!(repo.name);
-
-        let renderer = RepoRenderer::new(repo, cmd.flags);
+        let renderer = RepoRenderer::new(&repo, cmd.flags);
         let renderer = if let Ok(renderer) = renderer {
           renderer
         } else {
           return ExitCode::FAILURE;
         };
 
+        log::render_start(&repo.name);
         if let Err(e) = renderer.render() {
           errorln!("Failed rendering pages for {name:?}: {e}",
                    name = renderer.name);
           return ExitCode::FAILURE;
         }
-        info_done!();
-
+        log::render_done();
       }
     }
     SubCmd::Render { repo_name } => {
@@ -1627,40 +1632,44 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
       };
 
-      info!("Updating global repository index...");
-      if let Err(e) = render_index(&repos, cmd.flags.private()) {
-        errorln!("Failed rendering global repository index: {e}");
-      }
-      info_done!();
-
       let mut repo = None;
-      for r in repos {
+      for r in &repos {
         if *r.name == *repo_name {
           repo = Some(r);
           break;
         }
       }
 
-      if let Some(repo) = repo {
-        info!("Updating pages for {name:?}...", name = repo.name);
-
-        let renderer = RepoRenderer::new(repo, cmd.flags);
-        let renderer = if let Ok(renderer) = renderer {
-          renderer
-        } else {
-          return ExitCode::FAILURE;
-        };
-
-        if let Err(e) = renderer.render() {
-          errorln!("Failed rendering pages for {name:?}: {e}",
-                   name = renderer.name);
-        }
-
-        info_done!();
-      } else {
+      if repo.is_none() {
         errorln!("Couldnt' find repository {repo_name:?} in {repos_dir:?}");
         return ExitCode::FAILURE;
       }
+      let repo = repo.unwrap();
+
+      let renderer = RepoRenderer::new(repo, cmd.flags);
+      let renderer = if let Ok(renderer) = renderer {
+        renderer
+      } else {
+        return ExitCode::FAILURE;
+      };
+
+      infoln!("Updating pages for git repository {repo_name:?}");
+      log::set_job_count(2); // tasks: render index + render repo
+
+      log::render_start("repository index");
+      if let Err(e) = render_index(&repos, cmd.flags.private()) {
+        errorln!("Failed rendering global repository index: {e}");
+      }
+      log::render_done();
+
+      log::render_start(&repo.name);
+
+      if let Err(e) = renderer.render() {
+        errorln!("Failed rendering pages for {name:?}: {e}",
+          name = renderer.name);
+      }
+
+      log::render_done();
     }
     SubCmd::Init { repo_name, description } => {
       let mut repo_path = if cmd.flags.private() {
@@ -1673,7 +1682,7 @@ fn main() -> ExitCode {
       let mut opts = RepositoryInitOptions::new();
       opts.bare(false).no_reinit(true);
 
-      info!("Initializing empty {repo_name:?} repository in {repo_path:?}...");
+      infoln!("Initializing empty {repo_name:?} repository in {repo_path:?}");
 
       if let Err(e) = Repository::init_opts(&repo_path, &opts) {
         errorln!("Couldn't initialize {repo_name:?}: {e}", e = e.message());
@@ -1684,10 +1693,9 @@ fn main() -> ExitCode {
         .is_err() {
         return ExitCode::FAILURE;
       }
-
-      info_done!();
     }
   }
 
+  log::finished(start.elapsed());
   ExitCode::SUCCESS
 }
