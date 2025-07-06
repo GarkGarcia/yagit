@@ -26,26 +26,27 @@ pub struct Date(pub Time);
 #[derive(Clone, Copy, Debug)]
 pub struct FullDate(pub Time);
 
-// TODO: [optimize]: allocation-free formatting?
-//
-// this is quite trick to implement by hand, so we would prolly have to row the
-// (pretty heavy) chrono crate
-//
-// on the other hand, if we only render pages that need updating you don't
-// expect to call this very often
+const FTIME_BUFF_LEN:  usize = 64;
+// TODO: [safety]: make this thread-safe?
+// the application is currently single-threaded, so this is a non-issue for now
+static mut FTIME_BUFF: [c_char; FTIME_BUFF_LEN] = [0; FTIME_BUFF_LEN];
+
+#[allow(static_mut_refs)]
 fn strftime(
   fmt: &CString,
   time: &Time,
   f: &mut fmt::Formatter<'_>
 ) -> fmt::Result {
   let time = time.seconds() as time_t;
+
   unsafe {
     let mut tm = mem::zeroed();
     libc::localtime_r(&time, &mut tm);
 
-    let mut buff: [c_char; 64] = [0; 64];
-    libc::strftime(buff.as_mut_ptr(), buff.len(), fmt.as_ptr(), &tm);
-    write!(f, "{}", CStr::from_ptr(buff.as_ptr()).to_str().unwrap())
+    libc::strftime(FTIME_BUFF.as_mut_ptr(), FTIME_BUFF_LEN, fmt.as_ptr(), &tm);
+    FTIME_BUFF[FTIME_BUFF_LEN - 1] = 0; // prevent buffer overflows when
+                                        // converting back to a CStr
+    write!(f, "{}", CStr::from_ptr(FTIME_BUFF.as_ptr()).to_str().unwrap())
   }
 }
 
