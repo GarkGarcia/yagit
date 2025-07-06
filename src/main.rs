@@ -637,7 +637,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</thead>")?;
     writeln!(&mut f, "<tbody>")?;
     writeln!(&mut f, "<tr>")?;
-    writeln!(&mut f, "<td><a href=\"./\" class=\"subtree\">..</a><td>")?;
+    writeln!(&mut f, "<td><a href=\"./\" class=\"subtree\">..</a></td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "<td align=\"right\"></td>")?;
     writeln!(&mut f, "</tr>")?;
@@ -1210,17 +1210,17 @@ struct FileSize(usize);
 impl Display for FileSize {
   // TODO: [feature]: print LOC instead of file size for text files?
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    const KIBI: usize = 1024;
-    const MEBI: usize = KIBI * 1024;
+    const K: usize = 1000;
+    const M: usize = K * 1000;
 
     let size = self.0;
 
-    if size < KIBI {
-      write!(f, "{}B", size)
-    } else if size < MEBI {
-      write!(f, "{}KB", size/MEBI)
+    if size >= M {
+      write!(f, "{}M", size/M)
+    } else if size >= K {
+      write!(f, "{}K", size/K)
     } else {
-      write!(f, "{}MB", size/KIBI)
+      write!(f, "{} bytes", size)
     }
   }
 }
