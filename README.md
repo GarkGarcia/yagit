@@ -48,6 +48,13 @@ $ yagit init REPO_NAME
 
 For more information check the `yagit.1` man page.
 
+## Limitations
+
+* yagit is only supported on UNIX systems
+* yagit is single threaded: this is because my personal VPS has a single core
+* yagit _does not_ support customization of the HTML output (see the
+  **Configuration** section bellow)
+
 ## Configuration
 
 A number of configuration options is provided at compile-time. See
