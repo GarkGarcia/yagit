@@ -815,7 +815,6 @@ impl<'repo> RepoRenderer<'repo> {
         commit.tree().ok().as_ref(),
         None
       ).expect("diff between trees should be there");
-    let stats = diff.stats().expect("should be able to accumulate stats");
 
     let deltas_iter = diff.deltas();
     let mut deltas: Vec<DeltaInfo<'_>> = Vec::with_capacity(deltas_iter.len());
@@ -890,11 +889,15 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     // ========================================================================
-
     // skip rendering the commit page if the file already exists
     if should_skip {
       return Ok(());
     }
+
+    // NOTE: this is an expensive operation, taking upwards of 76% of
+    //       execution-time: Diff::stats should only be called when we
+    //       know for the page needs updating
+    let stats = diff.stats().expect("should be able to accumulate stats");
 
     let mut f = match File::create(&path) {
       Ok(f)  => f,
