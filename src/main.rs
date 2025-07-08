@@ -285,9 +285,10 @@ impl<'repo> RepoRenderer<'repo> {
             continue;
           }
 
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
+          let content = unsafe {
+            // we trust Git to provide us valid UTF-8 on text files 
+            std::str::from_utf8_unchecked(blob.content()).to_string()
+          };
 
           let format = if name == "README.md" {
             ReadmeFormat::Md
@@ -308,9 +309,10 @@ impl<'repo> RepoRenderer<'repo> {
             continue;
           }
 
-          let content = std::str::from_utf8(blob.content())
-            .expect("README contents should be UTF-8")
-            .to_string();
+          let content = unsafe {
+            // we trust Git to provide us valid UTF-8 on text files 
+            std::str::from_utf8_unchecked(blob.content()).to_string()
+          };
 
           // TODO: [feature]: parse the license from content?
           license = Some(content);
@@ -655,28 +657,30 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</div>")?;
 
     if !blob.is_binary() && blob.size() > 0 {
-      if let Ok(content) = std::str::from_utf8(blob.content()) {
-        let lines = content.matches('\n').count() + 1;
-        let log_lines = log_floor(lines);
+      let content = unsafe {
+        // we trust Git to provide us valid UTF-8 on text files 
+        std::str::from_utf8_unchecked(blob.content())
+      };
+      let lines = content.matches('\n').count() + 1;
+      let log_lines = log_floor(lines);
 
-        writeln!(&mut f, "<div class=\"code-block blob\">")?;
-        writeln!(&mut f, "<pre id=\"line-numbers\">")?;
+      writeln!(&mut f, "<div class=\"code-block blob\">")?;
+      writeln!(&mut f, "<pre id=\"line-numbers\">")?;
 
-        for n in 1..lines {
-          writeln!(&mut f, "<a href=\"#l{n}\">{n:0log_lines$}</a>")?;
-        }
-
-        writeln!(&mut f, "</pre>")?;
-        writeln!(&mut f, "<pre id=\"blob\">")?;
-
-        for (i, line) in content.lines().enumerate() {
-          writeln!(&mut f, "<span id=\"l{n}\">{line}</span>",
-                           line = Escaped(line), n = i + 1)?;
-        }
-
-        writeln!(&mut f, "</pre>")?;
-        writeln!(&mut f, "</div>")?;
+      for n in 1..lines {
+        writeln!(&mut f, "<a href=\"#l{n}\">{n:0log_lines$}</a>")?;
       }
+
+      writeln!(&mut f, "</pre>")?;
+      writeln!(&mut f, "<pre id=\"blob\">")?;
+
+      for (i, line) in content.lines().enumerate() {
+        writeln!(&mut f, "<span id=\"l{n}\">{line}</span>",
+          line = Escaped(line), n = i + 1)?;
+      }
+
+      writeln!(&mut f, "</pre>")?;
+      writeln!(&mut f, "</div>")?;
     }
 
     writeln!(&mut f, "</main>")?;
@@ -1067,7 +1071,7 @@ impl<'repo> RepoRenderer<'repo> {
           for line_id in 0..lines_of_hunk {
             let line = patch.line_in_hunk(hunk_id, line_id).unwrap();
             let line_content = unsafe {
-              // the Git line content should be valid UTF8
+              // we trust Git to provide us valid UTF-8 on text files 
               std::str::from_utf8_unchecked(line.content())
             };
 
