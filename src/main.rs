@@ -14,7 +14,6 @@ use std::{
 };
 use git2::{
   Repository,
-  Blob,
   Tree,
   Commit,
   ObjectType,
@@ -413,8 +412,8 @@ impl<'repo> RepoRenderer<'repo> {
       )?;
     }
 
-    for (blob, mode, path) in blob_stack {
-      self.render_blob(&blob, mode, path, last_commit_time)?;
+    for (blob, path) in blob_stack {
+      self.render_blob(blob, path, last_commit_time)?;
     }
 
     Ok(())
@@ -426,7 +425,7 @@ impl<'repo> RepoRenderer<'repo> {
     parent: PathBuf,
     root: bool,
     tree_stack: &mut Vec<(Tree<'repo>, PathBuf)>,
-    blob_stack: &mut Vec<(Blob<'repo>, Mode, PathBuf)>,
+    blob_stack: &mut Vec<(Blob, PathBuf)>,
   ) -> io::Result<()> {
     let mut blobs_path = self.output_path.clone();
     blobs_path.push(self.name);
@@ -481,30 +480,6 @@ impl<'repo> RepoRenderer<'repo> {
 
       match entry.kind() {
         Some(ObjectType::Blob) => {
-          let blob = entry
-            .to_object(self.repo)
-            .unwrap()
-            .peel_to_blob()
-            .unwrap();
-
-          let mut blob_path = self.output_path.clone();
-          blob_path.push(self.name);
-          blob_path.push(BLOB_SUBDIR);
-          blob_path.extend(&path);
-
-          let mut blob_f = match File::create(&blob_path) {
-            Ok(f)  => f,
-            Err(e) => {
-              errorln!("Failed to create {blob_path:?}: {e}");
-              return Err(e);
-            }
-          };
-
-          if let Err(e) = blob_f.write_all(blob.content()) {
-            errorln!("Failed to copy file blob {blob_path:?}: {e}");
-            return Err(e);
-          }
-
           writeln!(
             &mut f,
             "<tr><td><a href=\"/{root}{name}/{TREE_SUBDIR}/{path}.html\">{path}</a></td></tr>",
@@ -517,8 +492,9 @@ impl<'repo> RepoRenderer<'repo> {
             warnln!("Blob named {path:?}! Skiping \"{}.html\"...",
                     path.to_string_lossy());
           } else {
-            let mode = Mode(entry.filemode());
-            blob_stack.push((blob, mode, path));
+            blob_stack.push(
+              (Blob { id: entry.id(), mode: Mode(entry.filemode()) }, path)
+            );
           }
         }
         Some(ObjectType::Tree) => {
@@ -590,8 +566,7 @@ impl<'repo> RepoRenderer<'repo> {
 
   fn render_blob(
     &self,
-    blob: &Blob<'repo>,
-    mode: Mode,
+    blob: Blob,
     path: PathBuf,
     last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
@@ -609,10 +584,36 @@ impl<'repo> RepoRenderer<'repo> {
     if !self.full_build {
       if let Ok(meta) = fs::metadata(&page_path) {
         let last_modified = meta.modified().unwrap();
-        if last_modified > last_commit_time[&blob.id()] {
+        if last_modified > last_commit_time[&blob.id] {
           return Ok(());
         }
       }
+    }
+
+    // ========================================================================
+    let mode = blob.mode;
+    let blob = self.repo
+      .find_object(blob.id, None)
+      .unwrap()
+      .peel_to_blob()
+      .unwrap();
+
+    let mut raw_blob_path = self.output_path.clone();
+    raw_blob_path.push(self.name);
+    raw_blob_path.push(BLOB_SUBDIR);
+    raw_blob_path.extend(&path);
+
+    let mut blob_f = match File::create(&raw_blob_path) {
+      Ok(f)  => f,
+      Err(e) => {
+        errorln!("Failed to create {raw_blob_path:?}: {e}");
+        return Err(e);
+      }
+    };
+
+    if let Err(e) = blob_f.write_all(blob.content()) {
+      errorln!("Failed to copy file blob {raw_blob_path:?}: {e}");
+      return Err(e);
     }
 
     let mut f = match File::create(&page_path) {
@@ -623,6 +624,7 @@ impl<'repo> RepoRenderer<'repo> {
       }
     };
 
+    // ========================================================================
     self.render_header(
       &mut f,
       PageTitle::TreeEntry { repo_name: self.name, path: &path },
@@ -872,8 +874,7 @@ impl<'repo> RepoRenderer<'repo> {
           .num_lines_in_hunk(hunk_id)
           .unwrap();
 
-        for line_id in 0..lines_of_hunk {
-          let line = patch
+        for line_id in 0..lines_of_hunk { let line = patch
             .line_in_hunk(hunk_id, line_id)
             .unwrap();
 
@@ -1212,25 +1213,10 @@ impl<'repo> RepoRenderer<'repo> {
   }
 }
 
-#[derive(Clone, Copy)]
-struct FileSize(usize);
-
-impl Display for FileSize {
-  // TODO: [feature]: print LOC instead of file size for text files?
-  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    const K: usize = 1000;
-    const M: usize = K * 1000;
-
-    let size = self.0;
-
-    if size >= M {
-      write!(f, "{}M", size/M)
-    } else if size >= K {
-      write!(f, "{}K", size/K)
-    } else {
-      write!(f, "{} bytes", size)
-    }
-  }
+#[derive(Clone, Copy, Debug)]
+struct Blob {
+  id:   Oid,
+  mode: Mode,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1331,6 +1317,27 @@ impl Display for Mode {
     }
 
     Ok(())
+  }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct FileSize(usize);
+
+impl Display for FileSize {
+  // TODO: [feature]: print LOC instead of file size for text files?
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    const K: usize = 1000;
+    const M: usize = K * 1000;
+
+    let size = self.0;
+
+    if size >= M {
+      write!(f, "{}M", size/M)
+    } else if size >= K {
+      write!(f, "{}K", size/K)
+    } else {
+      write!(f, "{} bytes", size)
+    }
   }
 }
 
