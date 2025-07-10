@@ -921,7 +921,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "<dl>")?;
 
     writeln!(&mut f, "<dt>Commit</dt>")?;
-    writeln!(&mut f, "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+    writeln!(&mut f, "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}</a><dd>",
                      root = self.output_root,
                      name = Escaped(self.name), id = commit.id())?;
 
@@ -929,7 +929,7 @@ impl<'repo> RepoRenderer<'repo> {
       writeln!(&mut f, "<dt>Parent</dt>")?;
       writeln!(
         &mut f,
-        "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}<a/><dd>",
+        "<dd><a href=\"/{root}{name}/{COMMIT_SUBDIR}/{id}.html\">{id}</a><dd>",
         root = self.output_root,
         name = Escaped(self.name),
         id = parent.id()
