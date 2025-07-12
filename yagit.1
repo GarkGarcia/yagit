@@ -18,6 +18,10 @@ render
 .Op Fl \-\-private
 \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ init\ \ 
 .Ar repo-name
+.Nm
+.Op Fl \-\-private
+\ \ \ \ \ \ \ \ \ \ \ \ \ \ \ \ delete
+.Ar repo-name
 .Sh DESCRIPTION
 .Nm
 maintains a store of Git repositories at
@@ -52,9 +56,13 @@ and updates the index page
 Renders the HTML pages for a repository at
 .Ar REPOS_DIR/repo\-name
 and updates the index page
-.It \fBinit\fR Ar repo\-name
-Initializes a bare Git repo at
+.It \fBinit\fR Ar repo\-name Ar description
+Initializes and configures a Git repo at
 .Ar REPOS_DIR/repo\-name
+.It \fBdelete\fR Ar repo\-name
+Deletes the Git repository at
+.Ar REPOS_DIR/repo\-name
+and re-renders the global repository index
 .El
 .Sh FLAGS
 .Bl -tag -width Ds

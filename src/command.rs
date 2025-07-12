@@ -166,7 +166,7 @@ fn usage(program_name: &str, tag: Option<CmdTag>) {
       usageln!("{program_name} [{FULL_BUILD_FLAG}] [{PRIVATE_FLAG}] {RENDER_CMD} <repo-name>");
     }
     Some(CmdTag::Init) => {
-      usageln!("{program_name} [{PRIVATE_FLAG}] {INIT_CMD} <repo-name>");
+      usageln!("{program_name} [{PRIVATE_FLAG}] {INIT_CMD} <repo-name> <description>");
     }
     Some(CmdTag::Delete) => {
       usageln!("{program_name} [{PRIVATE_FLAG}] {DELETE_CMD} <repo-name>");

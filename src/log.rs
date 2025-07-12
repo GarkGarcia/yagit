@@ -56,7 +56,7 @@ pub(crate) fn log(level: Level, args: &Arguments<'_>) {
     Level::Usage => {
       print!("{BOLD_YELLOW}     Usage{RESET} ");
       println!("{}", args);
-      println!("          For more information check the {UNDERLINE}yagit(1){RESET} man page.");
+      println!("           For more information check the {UNDERLINE}yagit(1){RESET} man page.");
       log_current_job();
     }
   }
