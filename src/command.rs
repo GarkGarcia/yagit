@@ -3,6 +3,7 @@ use std::{env, ops::BitOrAssign};
 const RENDER_BATCH_CMD: &str = "render-batch";
 const RENDER_CMD:       &str = "render";
 const INIT_CMD:         &str = "init";
+const DELETE_CMD:           &str = "delete";
 
 const FULL_BUILD_FLAG: &str = "--full-build";
 const PRIVATE_FLAG:    &str = "--private";
@@ -18,6 +19,7 @@ enum CmdTag {
   RenderBatch,
   Render,
   Init,
+  Delete,
 }
 
 #[derive(Clone, Debug)]
@@ -29,7 +31,10 @@ pub enum SubCmd {
   Init {
     repo_name:   String,
     description: String,
-  }
+  },
+  Delete {
+    repo_name: String,
+  },
 }
 
 impl Cmd {
@@ -40,6 +45,7 @@ impl Cmd {
         Some(arg) if arg == RENDER_BATCH_CMD => break CmdTag::RenderBatch,
         Some(arg) if arg == RENDER_CMD       => break CmdTag::Render,
         Some(arg) if arg == INIT_CMD         => break CmdTag::Init,
+        Some(arg) if arg == DELETE_CMD       => break CmdTag::Delete,
 
         Some(arg) if arg == FULL_BUILD_FLAG => {
           flags |= Flags::FULL_BUILD;
@@ -100,6 +106,17 @@ impl Cmd {
 
         SubCmd::Init { repo_name, description, }
       }
+      CmdTag::Delete => {
+        let repo_name = if let Some(name) = args.next() {
+          name
+        } else {
+          errorln!("No repository name providade");
+          usage(program_name, Some(tag));
+          return Err(());
+        };
+
+        SubCmd::Delete { repo_name, }
+      }
     };
 
     if args.next().is_some() {
@@ -149,7 +166,10 @@ fn usage(program_name: &str, tag: Option<CmdTag>) {
       usageln!("{program_name} [{FULL_BUILD_FLAG}] [{PRIVATE_FLAG}] {RENDER_CMD} <repo-name>");
     }
     Some(CmdTag::Init) => {
-      usageln!("{program_name} [{PRIVATE_FLAG}] {INIT_CMD} <repo-name>");
+      usageln!("{program_name} [{PRIVATE_FLAG}] {INIT_CMD} <repo-name> <description>");
+    }
+    Some(CmdTag::Delete) => {
+      usageln!("{program_name} [{PRIVATE_FLAG}] {DELETE_CMD} <repo-name>");
     }
   }
 }

@@ -46,6 +46,12 @@ To initiliaze an empty repository at repository store run
 $ yagit init REPO_NAME
 ```
 
+Repositories managed by yagit can be deleted using the `delete` command:
+
+```console
+$ yagit delete REPO_NAME
+```
+
 For more information check the `yagit.1` man page.
 
 ## Limitations
