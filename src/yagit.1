@@ -25,9 +25,9 @@ render
 .Sh DESCRIPTION
 .Nm
 maintains a store of Git repositories at
-.Ar /var/git/public
+.Ar STORE_PATH
 and renders HTML pages for such repositories at the location
-.Ar /var/www/git.
+.Ar OUTPUT_PATH.
 
 By default,
 .Nm
@@ -39,29 +39,29 @@ flag.
 
 .Nm
 also maintains a store of Git repositories at
-.Ar /var/git/private,
+.Ar PRIVATE_STORE_PATH,
 which can be switched on using the
 .Fl --private
 flag. The HTML pages for repositories at
-.Ar /var/git/private
+.Ar PRIVATE_STORE_PATH
 are rendered at
-.Ar /var/www/git/private/
+.Ar OUTPUT_PATH/PRIVATE_OUTPUT_ROOT
 .Sh COMMANDS
 .Bl -tag -width Ds
 .It \fBrender\-batch\fR
 Renders the HTML pages for all repositories at
-.Ar /var/git/public
+.Ar STORE_PATH
 and updates the index page
 .It \fBrender\fR Ar repo\-name
 Renders the HTML pages for a repository at
-.Ar /var/git/public/repo\-name
+.Ar STORE_PATH/repo\-name
 and updates the index page
 .It \fBinit\fR Ar repo\-name Ar description
 Initializes and configures a Git repo at
-.Ar /var/git/public/repo\-name
+.Ar STORE_PATH/repo\-name
 .It \fBdelete\fR Ar repo\-name
 Deletes the Git repository at
-.Ar /var/git/public/repo\-name
+.Ar STORE_PATH/repo\-name
 and re-renders the global repository index
 .El
 .Sh FLAGS
@@ -70,9 +70,9 @@ and re-renders the global repository index
 Disables incremental builds (re\-renders all HTML pages)
 .It Fl --private
 Use the
-.Ar /var/git/private
+.Ar PRIVATE_STORE_PATH
 store instead of
-.Ar /var/git/public
+.Ar STORE_PATH
 .El
 .Sh AUTHORS
 .An Pablo Aq Mt pablo-pie@riseup.net

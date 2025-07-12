@@ -3,6 +3,8 @@
 /site
 Cargo.lock
 
+yagit.1
+
 /profiling
 perf.data
 perf.data.old
