@@ -28,7 +28,13 @@ use git2::{
 
 use time::{DateTime, Date, FullDate};
 use command::{Cmd, SubCmd, Flags};
-use config::{TREE_SUBDIR, BLOB_SUBDIR, COMMIT_SUBDIR};
+use config::{
+  OUTPUT_PATH,
+  PRIVATE_OUTPUT_ROOT,
+  TREE_SUBDIR,
+  BLOB_SUBDIR,
+  COMMIT_SUBDIR
+};
 use escape::Escaped;
 
 #[cfg(not(debug_assertions))]
@@ -1742,6 +1748,18 @@ fn main() -> ExitCode {
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering repository index: {e}");
         return ExitCode::FAILURE;
+      }
+
+      if cmd.flags.private() {
+        warnln!(
+          "Did not remove \"{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}\". Run \" rm '{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}' if necessary",
+          repo_name = repo.name,
+        );
+      } else {
+        warnln!(
+          "Did not remove \"{OUTPUT_PATH}/{repo_name}\". Run \"rm '{OUTPUT_PATH}/{repo_name}'\" if necessary",
+          repo_name = repo.name,
+        );
       }
 
       log::finished(start.elapsed());
