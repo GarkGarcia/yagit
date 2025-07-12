@@ -4,9 +4,9 @@ static_toml::static_toml! {
   static CONFIG = include_toml!("config.toml");
 }
 
-const STORE_PATH:          &str = CONFIG.git.release.store_path;
-const PRIVATE_STORE_PATH:  &str = CONFIG.git.release.private_store_path;
-const OUTPUT_PATH:         &str = CONFIG.output.release.path;
+const STORE_PATH:          &str = CONFIG.git.store_path;
+const PRIVATE_STORE_PATH:  &str = CONFIG.git.private_store_path;
+const OUTPUT_PATH:         &str = CONFIG.output.path;
 const PRIVATE_OUTPUT_ROOT: &str = CONFIG.output.private_output_root;
 
 const MAN_SRC: &str = include_str!("src/yagit.1");
