@@ -1,4 +1,3 @@
 # TODO
 
-* Add functionality:
-  * subcommand for deleting an existing repo
+* add a testing framework

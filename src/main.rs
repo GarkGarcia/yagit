@@ -5,7 +5,6 @@ use std::{
   mem,
   env,
   fmt::{self, Display},
-  ffi::OsStr,
   collections::HashMap,
   time::{Duration, SystemTime, Instant},
   process::ExitCode,
@@ -61,6 +60,7 @@ struct RepoInfo {
   pub name:        String,
   pub owner:       String,
   pub description: Option<String>,
+  pub path:        PathBuf,
 
   pub repo:         Repository,
   pub last_commit:  Time,
@@ -68,9 +68,8 @@ struct RepoInfo {
 }
 
 impl RepoInfo {
-  fn open<P, S>(path: P, name: S) -> Result<Self, ()>
+  fn open<S>(path: PathBuf, name: S) -> Result<Self, ()>
   where
-    P: AsRef<Path> + AsRef<OsStr> + fmt::Debug,
     S: AsRef<str>,
   {
     let repo = match Repository::open(&path) {
@@ -113,13 +112,9 @@ impl RepoInfo {
       return Err(());
     }
 
-    let mut path = PathBuf::from(&path);
-    if !repo.is_bare() {
-      path.push(".git");
-    }
-
     let owner = {
       let mut owner_path = path.clone();
+      if !repo.is_bare() { owner_path.push(".git"); }
       owner_path.push("owner");
 
       let mut owner = String::with_capacity(32);
@@ -141,6 +136,7 @@ impl RepoInfo {
 
     let description = {
       let mut dsc_path = path.clone();
+      if !repo.is_bare() { dsc_path.push(".git"); }
       dsc_path.push("description");
       let mut dsc = String::with_capacity(512);
 
@@ -164,6 +160,7 @@ impl RepoInfo {
       name: String::from(name.as_ref()),
       owner,
       description,
+      path,
       repo,
       first_commit,
       last_commit,
@@ -189,7 +186,7 @@ impl RepoInfo {
               let repo_name = entry.file_name();
 
               result.push(
-                RepoInfo::open(&repo_path, repo_name.to_string_lossy())?
+                RepoInfo::open(repo_path, repo_name.to_string_lossy())?
               );
             }
             _ => continue,
@@ -1628,6 +1625,8 @@ fn main() -> ExitCode {
         }
         log::render_done();
       }
+
+      log::finished(start.elapsed());
     }
     SubCmd::Render { repo_name } => {
       let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
@@ -1662,18 +1661,18 @@ fn main() -> ExitCode {
 
       log::render_start("repository index");
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
-        errorln!("Failed rendering global repository index: {e}");
+        errorln!("Failed rendering repository index: {e}");
       }
       log::render_done();
 
       log::render_start(&repo.name);
-
       if let Err(e) = renderer.render() {
         errorln!("Failed rendering pages for {name:?}: {e}",
           name = renderer.name);
       }
-
       log::render_done();
+
+      log::finished(start.elapsed());
     }
     SubCmd::Init { repo_name, description } => {
       let mut repo_path = if cmd.flags.private() {
@@ -1686,8 +1685,6 @@ fn main() -> ExitCode {
       let mut opts = RepositoryInitOptions::new();
       opts.bare(false).no_reinit(true);
 
-      infoln!("Initializing empty {repo_name:?} repository in {repo_path:?}");
-
       if let Err(e) = Repository::init_opts(&repo_path, &opts) {
         errorln!("Couldn't initialize {repo_name:?}: {e}", e = e.message());
         return ExitCode::FAILURE;
@@ -1697,9 +1694,59 @@ fn main() -> ExitCode {
         .is_err() {
         return ExitCode::FAILURE;
       }
+
+      infoln!("Initialized empty repository in {repo_path:?}");
+    }
+    SubCmd::Delete { repo_name } => {
+      let mut repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
+        repos
+      } else {
+        return ExitCode::FAILURE;
+      };
+
+      let mut repo = None;
+      for i in 0..repos.len() {
+        if repos[i].name == *repo_name {
+          repo = Some(repos.remove(i));
+          break;
+        }
+      }
+
+      if repo.is_none() {
+        errorln!("Couldnt' find repository {repo_name:?} in {repos_dir:?}");
+        return ExitCode::FAILURE;
+      }
+      let repo = repo.unwrap();
+
+      let answer = query!(
+        "Would you like to remove {repo_path:?}?",
+        repo_path = repo.path
+      );
+
+      if answer != "y" && answer != "Y" {
+        infoln!("Not deleting {repo_name:?}", repo_name = repo.name);
+        return ExitCode::SUCCESS;
+      }
+
+      log::set_job_count(1); // tasks: render index
+
+      if let Err(e) = fs::remove_dir_all(&repo.path) {
+        errorln!("Couldnt' remove {repo_path:?}: {e}", repo_path = repo.path);
+        return ExitCode::FAILURE;
+      }
+
+      log::render_start("repository index");
+      infoln!("Removed {repo_path:?}", repo_path = repo.path);
+      log::render_done();
+
+      if let Err(e) = render_index(&repos, cmd.flags.private()) {
+        errorln!("Failed rendering repository index: {e}");
+        return ExitCode::FAILURE;
+      }
+
+      log::finished(start.elapsed());
     }
   }
 
-  log::finished(start.elapsed());
   ExitCode::SUCCESS
 }

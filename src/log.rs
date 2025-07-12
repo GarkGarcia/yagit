@@ -39,27 +39,46 @@ struct Counter {
 pub(crate) fn log(level: Level, args: &Arguments<'_>) {
   match level {
     Level::Error => {
-      eprint!("{BOLD_RED}    Error{RESET} ");
+      eprint!("{BOLD_RED}     Error{RESET} ");
       eprintln!("{}", args);
       // shouldn't print the job counter because we are about to die
     }
     Level::Info => {
-      print!("{BOLD_BLUE}     Info{RESET} ");
+      print!("{BOLD_BLUE}      Info{RESET} ");
       println!("{}", args);
       log_current_job();
     }
     Level::Warn => {
-      print!("{BOLD_YELLOW}  Warning{RESET} ");
+      print!("{BOLD_YELLOW}   Warning{RESET} ");
       println!("{}", args);
       log_current_job();
     }
     Level::Usage => {
-      print!("{BOLD_YELLOW}    Usage{RESET} ");
+      print!("{BOLD_YELLOW}     Usage{RESET} ");
       println!("{}", args);
       println!("          For more information check the {UNDERLINE}yagit(1){RESET} man page.");
       log_current_job();
     }
   }
+}
+
+pub(crate) fn query(args: &Arguments<'_>) -> String {
+  let mut stdout = io::stdout();
+  let stdin = io::stdin();
+  let mut result = String::new();
+
+  let _ = write!(stdout, "{BOLD_YELLOW}   Confirm{RESET} {} ", args);
+  let _ = stdout.flush();
+
+  if stdin.read_line(&mut result).is_err() {
+    result.clear();
+  } else if result.ends_with('\n') {
+    let _ = result.pop();
+  }
+
+  // shouldn't print the job counter because we are should be running the
+  // 'delete' command, so there are no jobs
+  result
 }
 
 pub fn set_job_count(total: usize) {
@@ -87,7 +106,7 @@ pub fn render_done() {
 
     let space_padding = "... [/]".len() + 2 * crate::log_floor(COUNTER.total);
     println!(
-      "{BOLD_GREEN} Rendered{RESET} {name}{empty:space_padding$}",
+      "{BOLD_GREEN}  Rendered{RESET} {name}{empty:space_padding$}",
       name  = COUNTER.current_repo_name,
       empty = "",
     );
@@ -104,7 +123,7 @@ fn log_current_job() {
 
     let _ = write!(
       stdout,
-      "{BOLD_CYAN}Rendering{RESET} {name}... {BOLD_WHITE}[{count:>padding$}/{total}]{RESET}\r",
+      "{BOLD_CYAN} Rendering{RESET} {name}... {BOLD_WHITE}[{count:>padding$}/{total}]{RESET}\r",
       count = COUNTER.count,
       total = COUNTER.total,
       padding = crate::log_floor(COUNTER.total),
@@ -158,12 +177,20 @@ macro_rules! usageln {
   });
 }
 
+#[macro_export]
+macro_rules! query {
+  // query!("a {}", "question?");
+  ($($arg:tt)+) => ({
+    $crate::log::query(&std::format_args!($($arg)+))
+  });
+}
+
 pub fn finished(duration: Duration) {
   let duration = duration.as_millis() / 100;
   let secs  = duration / 10;
   let dsecs = duration % 10;
 
-  println!("{BOLD_GREEN} Finished{RESET} Rendering took {secs}.{dsecs}s");
+  println!("{BOLD_GREEN}  Finished{RESET} Rendering took {secs}.{dsecs}s");
 }
 
 #[cfg(target_arch = "x86_64")]
