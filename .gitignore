@@ -1,6 +1,5 @@
 /target
 /test
-/site
 Cargo.lock
 
 /profiling
