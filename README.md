@@ -15,7 +15,7 @@ For a live example please see <https://git.pablopie.xyz>!
 
 ## Usage
 
-yagit maintains a store of Git repositories at `REPOS_DIR/` and
+yagit maintains a store of Git repositories at `STORE_PATH/` and
 renders HTML pages for such repositories at the location `OUTPUT_DIR/`.
 
 By default, yagit renders HTML pages in incremental mode: pages for Git
@@ -23,9 +23,9 @@ commits and blobs are only renderer if the relevant commits are newer than the
 page's last modification date. This option can be disabled with the
 `--full-build` flag.
 
-yagit also maintains a store of Git repositories at `PRIVATE_REPOS_DIR/`,
+yagit also maintains a store of Git repositories at `PRIVATE_STORE_PATH/`,
 which can be switched on using the `--private` flag. The HTML pages for
-repositories at `PRIVATE_REPOS_DIR/` are rendered at
+repositories at `PRIVATE_STORE_PATH/` are rendered at
 `OUTPUT_PATH/PRIVATE_OUTPUT_ROOT/`.
 
 To render the HTML pages for a single repository using yagit run:
@@ -34,7 +34,7 @@ To render the HTML pages for a single repository using yagit run:
 $ yagit render REPO_NAME
 ```
 
-To render HTML pages for all repositories at `REPOS_DIR` run:
+To render HTML pages for all repositories at `STORE_PATH` run:
 
 ```console
 $ yagit render-batch
@@ -63,8 +63,9 @@ For more information check the `yagit.1` man page.
 
 ## Configuration
 
-A number of configuration options is provided at compile-time. See
-`config.toml`.
+yagit provides a number of configuration keys at compile-time, such as
+`STORE_PATH`, `OUTPUT_PATH`, etc. See `config.toml` for a full list of
+configuration keys.
 
 ### Customizing the HTML Output
 
