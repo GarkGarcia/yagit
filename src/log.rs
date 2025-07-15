@@ -39,23 +39,19 @@ struct Counter {
 pub(crate) fn log(level: Level, args: &Arguments<'_>) {
   match level {
     Level::Error => {
-      eprint!("{BOLD_RED}     Error{RESET} ");
-      eprintln!("{}", args);
+      eprintln!("     {BOLD_RED}Error{RESET} {args}");
       // shouldn't print the job counter because we are about to die
     }
     Level::Info => {
-      print!("{BOLD_BLUE}      Info{RESET} ");
-      println!("{}", args);
+      println!("      {BOLD_BLUE}Info{RESET} {args}");
       log_current_job();
     }
     Level::Warn => {
-      print!("{BOLD_YELLOW}   Warning{RESET} ");
-      println!("{}", args);
+      println!("   {BOLD_YELLOW}Warning{RESET} {args}");
       log_current_job();
     }
     Level::Usage => {
-      print!("{BOLD_YELLOW}     Usage{RESET} ");
-      println!("{}", args);
+      println!("     {BOLD_YELLOW}Usage{RESET} {args}");
       println!("           For more information check the {UNDERLINE}yagit(1){RESET} man page.");
       log_current_job();
     }
@@ -106,7 +102,7 @@ pub fn render_done() {
 
     let space_padding = "... [/]".len() + 2 * crate::log_floor(COUNTER.total);
     println!(
-      "{BOLD_GREEN}  Rendered{RESET} {name}{empty:space_padding$}",
+      "  {BOLD_GREEN}Rendered{RESET} {name}{empty:space_padding$}",
       name  = COUNTER.current_repo_name,
       empty = "",
     );
@@ -123,7 +119,7 @@ fn log_current_job() {
 
     let _ = write!(
       stdout,
-      "{BOLD_CYAN} Rendering{RESET} {name}... {BOLD_WHITE}[{count:>padding$}/{total}]{RESET}\r",
+      " {BOLD_CYAN}Rendering{RESET} {name}... {BOLD_WHITE}[{count:>padding$}/{total}]{RESET}\r",
       count = COUNTER.count,
       total = COUNTER.total,
       padding = crate::log_floor(COUNTER.total),
@@ -190,7 +186,7 @@ pub fn finished(duration: Duration) {
   let secs  = duration / 10;
   let dsecs = duration % 10;
 
-  println!("{BOLD_GREEN}  Finished{RESET} Rendering took {secs}.{dsecs}s");
+  println!("  {BOLD_GREEN}Finished{RESET} Rendering took {secs}.{dsecs}s");
 }
 
 #[cfg(target_arch = "x86_64")]
