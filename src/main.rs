@@ -6,9 +6,10 @@ use std::{
   env,
   fmt::{self, Display},
   collections::HashMap,
-  time::{Duration, SystemTime, Instant},
+  time::{SystemTime, Instant},
   process::ExitCode,
   os::unix::fs::PermissionsExt,
+  cell::RefCell,
   cmp,
 };
 use git2::{
@@ -234,9 +235,14 @@ struct RepoRenderer<'repo> {
   pub readme:  Option<Readme>,
   pub license: Option<String>,
 
+  // stores the seconds since the Unix epoch of the last commit each blob was
+  // modified at
+  //
+  // None if running with --full-build enabled
+  pub last_commit_time: Option<RefCell<HashMap<Oid, u64>>>,
+
   // cached constants which depend on command-line flags:
   // these shouldn't be modified at runtime
-  pub full_build:  bool,
   pub output_path: PathBuf,
   pub output_root: &'static str,
 }
@@ -330,6 +336,12 @@ impl<'repo> RepoRenderer<'repo> {
       (PathBuf::from(config::OUTPUT_PATH), "")
     };
 
+    let last_commit_time = if flags.full_build() {
+      None
+    } else {
+      Some(RefCell::default())
+    };
+
     Ok(Self {
       name: &repo.name,
       description: repo.description.as_deref(),
@@ -341,7 +353,7 @@ impl<'repo> RepoRenderer<'repo> {
       readme,
       license,
 
-      full_build: flags.full_build(),
+      last_commit_time,
       output_path,
       output_root,
     })
@@ -349,11 +361,11 @@ impl<'repo> RepoRenderer<'repo> {
 
   pub fn render(&self) -> io::Result<()> {
     self.render_summary()?;
-    let last_commit_time = self.render_log()?;
+    self.render_log()?;
     if let Some(ref license) = self.license {
       self.render_license(license)?;
     }
-    self.render_tree(&last_commit_time)?;
+    self.render_tree()?;
 
     Ok(())
   }
@@ -396,7 +408,6 @@ impl<'repo> RepoRenderer<'repo> {
 
   pub fn render_tree(
     &self,
-    last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
     let mut tree_stack = Vec::new();
     let mut blob_stack = Vec::new();
@@ -416,7 +427,7 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     for (blob, path) in blob_stack {
-      self.render_blob(blob, path, last_commit_time)?;
+      self.render_blob(blob, path)?;
     }
 
     Ok(())
@@ -571,7 +582,6 @@ impl<'repo> RepoRenderer<'repo> {
     &self,
     blob: Blob,
     path: PathBuf,
-    last_commit_time: &HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
     let mut page_path = self.output_path.clone();
     page_path.push(self.name);
@@ -584,9 +594,16 @@ impl<'repo> RepoRenderer<'repo> {
     //
     // skip rendering the page if the commit the blob was last updated on is
     // older than the page
-    if !self.full_build {
+    if let Some(ref last_commit_time) = &self.last_commit_time {
+      let last_commit_time = last_commit_time.borrow();
       if let Ok(meta) = fs::metadata(&page_path) {
-        let last_modified = meta.modified().unwrap();
+        let last_modified = meta
+          .modified()
+          .unwrap()
+          .duration_since(SystemTime::UNIX_EPOCH)
+          .unwrap()
+          .as_secs();
+
         if last_modified > last_commit_time[&blob.id] {
           return Ok(());
         }
@@ -696,9 +713,7 @@ impl<'repo> RepoRenderer<'repo> {
     Ok(())
   }
 
-  fn render_log(&self) -> io::Result<HashMap<Oid, SystemTime>> {
-    let mut last_mofied = HashMap::new();
-
+  fn render_log(&self) -> io::Result<()> {
     let mut revwalk = self.repo.revwalk().unwrap();
     revwalk.push_head().unwrap();
     let mut commits = Vec::new();
@@ -774,25 +789,54 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</html>")?;
 
     for commit in commits {
-      self.render_commit(&commit, &mut last_mofied)?;
+      self.render_commit_and_collect_last_commit_times(&commit)?;
     }
 
-    Ok(last_mofied)
+    Ok(())
   }
 
   /// Renders the commit to HTML and updates the access time
   ///
   /// Shorcircutes if the commit page already exists.
-  fn render_commit(
+  fn render_commit_and_collect_last_commit_times(
     &self,
     commit: &Commit<'repo>,
-    last_commit_time: &mut HashMap<Oid, SystemTime>,
   ) -> io::Result<()> {
-    let mut path = self.output_path.clone();
-    path.push(self.name);
-    path.push(COMMIT_SUBDIR);
-    path.push(format!("{}.html", commit.id()));
-    let should_skip = !self.full_build && path.exists();
+    // ========================================================================
+    let diff = self
+      .repo
+      .diff_tree_to_tree(
+        commit.parent(0).and_then(|p| p.tree()).ok().as_ref(),
+        commit.tree().ok().as_ref(),
+        None
+      ).expect("diff between trees should be there");
+
+    // collect the last time files were modified at
+    if let Some(ref last_commit_time) = &self.last_commit_time {
+      for diff_delta in diff.deltas() {
+        // filter desired deltas
+        if !matches!(diff_delta.status(),
+                     Delta::Added    | Delta::Copied | Delta::Deleted |
+                     Delta::Modified | Delta::Renamed) {
+          continue;
+        }
+
+        let new_file = diff_delta.new_file();
+
+        let mut last_commit_time = last_commit_time.borrow_mut();
+        let id = new_file.id();
+        let commit_time = commit.time().seconds() as u64;
+        if let Some(time) = last_commit_time.get_mut(&id) {
+          // the newest time is NOT garanteed by
+          // the order we loop through the commits
+          if *time < commit_time {
+            *time = commit_time;
+          }
+        } else {
+          last_commit_time.insert(id, commit_time);
+        }
+      }
+    }
 
     // ========================================================================
     #[derive(Debug)]
@@ -810,23 +854,25 @@ impl<'repo> RepoRenderer<'repo> {
       is_binary: bool,
     }
 
+    let mut path = self.output_path.clone();
+    path.push(self.name);
+    path.push(COMMIT_SUBDIR);
+    path.push(format!("{}.html", commit.id()));
+
+    // skip rendering the commit page if the file already exists
+    if self.last_commit_time.is_some() && path.exists() {
+      return Ok(());
+    }
+
     let sig = commit.author();
     let time = sig.when();
-
-    let diff = self
-      .repo
-      .diff_tree_to_tree(
-        commit.parent(0).and_then(|p| p.tree()).ok().as_ref(),
-        commit.tree().ok().as_ref(),
-        None
-      ).expect("diff between trees should be there");
 
     let deltas_iter = diff.deltas();
     let mut deltas: Vec<DeltaInfo<'_>> = Vec::with_capacity(deltas_iter.len());
     for (delta_id, diff_delta) in deltas_iter.enumerate() {
       // filter desired deltas
       if !matches!(diff_delta.status(),
-                   Delta::Added | Delta::Copied | Delta::Deleted |
+                   Delta::Added    | Delta::Copied | Delta::Deleted |
                    Delta::Modified | Delta::Renamed) {
         continue;
       }
@@ -835,25 +881,6 @@ impl<'repo> RepoRenderer<'repo> {
       let new_file = diff_delta.new_file();
       let old_path = &old_file.path().unwrap();
       let new_path = &new_file.path().unwrap();
-
-      // collect the last time a file was modified at
-      let id = new_file.id();
-      let commit_time = Duration::from_secs(commit.time().seconds() as u64);
-      let commit_time = SystemTime::UNIX_EPOCH + commit_time;
-      if let Some(time) = last_commit_time.get_mut(&id) {
-        // the newest time is NOT garanteed by
-        // the order we loop through the commits
-        if *time < commit_time {
-          *time = commit_time;
-        }
-      } else {
-        last_commit_time.insert(id, commit_time);
-      }
-
-      // TODO: [optmize]: refactor this? avoid late-stage decision making
-      if should_skip {
-        continue;
-      }
 
       let patch = Patch::from_diff(&diff, delta_id)
         .unwrap()
@@ -893,11 +920,6 @@ impl<'repo> RepoRenderer<'repo> {
     }
 
     // ========================================================================
-    // skip rendering the commit page if the file already exists
-    if should_skip {
-      return Ok(());
-    }
-
     // NOTE: this is an expensive operation, taking upwards of 76% of
     //       execution-time: Diff::stats should only be called when we
     //       know for the page needs updating
