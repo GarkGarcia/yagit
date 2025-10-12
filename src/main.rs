@@ -617,6 +617,7 @@ impl<'repo> RepoRenderer<'repo> {
       .unwrap()
       .peel_to_blob()
       .unwrap();
+    let is_binary = is_binary(&path, blob.is_binary());
 
     let mut raw_blob_path = self.output_path.clone();
     raw_blob_path.push(self.name);
@@ -678,7 +679,7 @@ impl<'repo> RepoRenderer<'repo> {
     writeln!(&mut f, "</table>")?;
     writeln!(&mut f, "</div>")?;
 
-    if !blob.is_binary() && blob.size() > 0 {
+    if !is_binary && blob.size() > 0 {
       let content = unsafe {
         // we trust Git to provide us valid UTF-8 on text files 
         std::str::from_utf8_unchecked(blob.content())
@@ -887,6 +888,10 @@ impl<'repo> RepoRenderer<'repo> {
         .expect("diff should have patch");
 
       let num_hunks = patch.num_hunks();
+      let is_binary = is_binary(
+        new_path,
+        old_file.is_binary() || new_file.is_binary()
+      );
 
       let mut delta_info = DeltaInfo {
         id: delta_id,
@@ -896,7 +901,7 @@ impl<'repo> RepoRenderer<'repo> {
         old_path,
         new_path,
         num_hunks,
-        is_binary: old_file.is_binary() || new_file.is_binary(),
+        is_binary,
       };
 
       for hunk_id in 0..num_hunks {
@@ -1584,6 +1589,20 @@ fn setup_repo(
   writeln!(&mut config_f, "\tdenyCurrentBranch = updateInstead")?;
 
   Ok(())
+}
+
+/// Determines wether or not a file is binary based on `path` and on what Git
+/// reports: this is needed because Git sometimes reports PDF files as
+/// non-binary files
+fn is_binary(path: &Path, git_is_binary: bool) -> bool {
+  const BINARY_FILE_EXTS: &[&str] = &["pdf", "bin"];
+  let mut is_binary = git_is_binary;
+
+  if let Some(ext) = path.extension() {
+    is_binary |= BINARY_FILE_EXTS.contains(&ext.to_string_lossy().as_ref());
+  }
+
+  is_binary
 }
 
 #[cfg(not(debug_assertions))]
