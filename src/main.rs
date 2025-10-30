@@ -88,10 +88,9 @@ impl RepoInfo {
 
     let (first_commit, last_commit) = {
       let mut revwalk = repo.revwalk().unwrap();
-      if let Err(e) = revwalk.push_head() {
-        errorln!("Couldn't retrieve repository HEAD in {name:?}: {e}. Check if HEAD contains any commits and points to the right branch",
-                 name = name.as_ref(),
-                 e = e.message());
+      if revwalk.push_head().is_err() {
+        errorln!("Couldn't retrieve repository HEAD in {name:?}. Did you push to \"master\" instead of \"main\"?",
+                 name = name.as_ref());
         return Err(());
       }
 
