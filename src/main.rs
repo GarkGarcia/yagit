@@ -66,7 +66,6 @@ struct RepoInfo {
   pub name:        String,
   pub owner:       String,
   pub description: Option<String>,
-  pub path:        PathBuf,
 
   pub repo:         Repository,
   pub last_commit:  Time,
@@ -165,7 +164,6 @@ impl RepoInfo {
       name: String::from(name.as_ref()),
       owner,
       description,
-      path,
       repo,
       first_commit,
       last_commit,
@@ -1660,7 +1658,8 @@ fn main() -> ExitCode {
       log::set_job_count(n_repos+1); // tasks: render index + render each repo
 
       log::render_start("repository index");
-      if render_index(&repos, cmd.flags.private()).is_err() {
+      if let Err(e) = render_index(&repos, cmd.flags.private()) {
+        errorln!("Failed rendering repository index: {e}");
         return ExitCode::FAILURE;
       }
       log::render_done();
@@ -1700,7 +1699,7 @@ fn main() -> ExitCode {
       }
 
       if repo.is_none() {
-        errorln!("Couldnt' find repository {repo_name:?} in {repos_dir:?}");
+        errorln!("Couldn't find repository {repo_name:?} in {repos_dir:?}");
         return ExitCode::FAILURE;
       }
       let repo = repo.unwrap();
@@ -1718,6 +1717,7 @@ fn main() -> ExitCode {
       log::render_start("repository index");
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering repository index: {e}");
+        return ExitCode::FAILURE;
       }
       log::render_done();
 
@@ -1754,63 +1754,55 @@ fn main() -> ExitCode {
       infoln!("Initialized empty repository in {repo_path:?}");
     }
     SubCmd::Delete { repo_name } => {
-      let mut repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
+      let mut repo_path = if cmd.flags.private() {
+        PathBuf::from(config::PRIVATE_STORE_PATH)
+      } else {
+        PathBuf::from(config::STORE_PATH)
+      };
+      repo_path.push(&repo_name);
+
+      if !fs::exists(&repo_path).unwrap_or(false) {
+        errorln!("Couldn't find repository {repo_name:?} in {repos_dir:?}");
+        return ExitCode::FAILURE;
+      }
+
+      let answer = query!("Would you like to remove {repo_path:?}?");
+      if answer != "y" && answer != "Y" {
+        infoln!("Not deleting {repo_name:?}");
+        return ExitCode::SUCCESS;
+      }
+
+      if let Err(e) = fs::remove_dir_all(&repo_path) {
+        errorln!("Couldn't remove {repo_path:?}: {e}");
+        return ExitCode::FAILURE;
+      }
+
+      infoln!("Removed {repo_path:?}");
+
+      if cmd.flags.private() {
+        warnln!(
+          "Did not remove \"{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}\". Run `rm \"{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}\"` if necessary"
+        );
+      } else {
+        warnln!(
+          "Did not remove \"{OUTPUT_PATH}/{repo_name}\". Run `rm \"{OUTPUT_PATH}/{repo_name}\"` if necessary"
+        );
+      }
+
+      // ======================================================================
+      let repos = if let Ok(repos) = RepoInfo::index(cmd.flags.private()) {
         repos
       } else {
         return ExitCode::FAILURE;
       };
 
-      let mut repo = None;
-      for i in 0..repos.len() {
-        if repos[i].name == *repo_name {
-          repo = Some(repos.remove(i));
-          break;
-        }
-      }
-
-      if repo.is_none() {
-        errorln!("Couldnt' find repository {repo_name:?} in {repos_dir:?}");
-        return ExitCode::FAILURE;
-      }
-      let repo = repo.unwrap();
-
-      let answer = query!(
-        "Would you like to remove {repo_path:?}?",
-        repo_path = repo.path
-      );
-
-      if answer != "y" && answer != "Y" {
-        infoln!("Not deleting {repo_name:?}", repo_name = repo.name);
-        return ExitCode::SUCCESS;
-      }
-
-      log::set_job_count(1); // tasks: render index
-
-      if let Err(e) = fs::remove_dir_all(&repo.path) {
-        errorln!("Couldnt' remove {repo_path:?}: {e}", repo_path = repo.path);
-        return ExitCode::FAILURE;
-      }
-
+      log::set_job_count(1);
       log::render_start("repository index");
-      infoln!("Removed {repo_path:?}", repo_path = repo.path);
-      log::render_done();
-
       if let Err(e) = render_index(&repos, cmd.flags.private()) {
         errorln!("Failed rendering repository index: {e}");
         return ExitCode::FAILURE;
       }
-
-      if cmd.flags.private() {
-        warnln!(
-          "Did not remove \"{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}\". Run \" rm '{OUTPUT_PATH}/{PRIVATE_OUTPUT_ROOT}{repo_name}' if necessary",
-          repo_name = repo.name,
-        );
-      } else {
-        warnln!(
-          "Did not remove \"{OUTPUT_PATH}/{repo_name}\". Run \"rm '{OUTPUT_PATH}/{repo_name}'\" if necessary",
-          repo_name = repo.name,
-        );
-      }
+      log::render_done();
 
       log::finished(start.elapsed());
     }
