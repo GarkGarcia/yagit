@@ -16,6 +16,9 @@ pub const COMMIT_SUBDIR:       &str = CONFIG.output.commit_subdir;
 pub const PRIVATE_OUTPUT_ROOT: &str = CONFIG.output.private_output_root;
 
 #[cfg(not(debug_assertions))]
+pub const GROUP_ID: u32  = CONFIG.output.group_id as u32;
+
+#[cfg(not(debug_assertions))]
 pub const GIT_USER: &str = CONFIG.git.user;
 pub const OWNER:    &str = CONFIG.git.store_owner;
 

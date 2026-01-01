@@ -4,6 +4,7 @@ tree_subdir         = "tree"
 blob_subdir         = "blob"
 commit_subdir       = "commit"
 private_output_root = "private/"
+group_id            = 33             # group ID for the output directories
 
 [git]
 store_path         = "/var/git/public"  # path to the public  repo store

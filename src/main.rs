@@ -1,6 +1,7 @@
 use std::{
   io::{self, Read, Write},
   fs::{self, File},
+  os::unix,
   path::{Path, PathBuf},
   mem,
   env,
@@ -444,7 +445,7 @@ impl<'repo> RepoRenderer<'repo> {
     blobs_path.extend(&parent);
 
     if !blobs_path.is_dir() {
-      fs::create_dir(&blobs_path)?;
+      create_dir(&blobs_path)?;
     }
 
     let mut index_path = self.output_path.clone();
@@ -453,19 +454,13 @@ impl<'repo> RepoRenderer<'repo> {
     index_path.extend(&parent);
 
     if !index_path.is_dir() {
-      fs::create_dir(&index_path)?;
+      create_dir(&index_path)?;
     }
 
     // ========================================================================
     index_path.push("index.html");
 
-    let mut f = match File::create(&index_path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {index_path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(index_path)?;
 
     self.render_header(
       &mut f,
@@ -621,26 +616,14 @@ impl<'repo> RepoRenderer<'repo> {
     raw_blob_path.push(BLOB_SUBDIR);
     raw_blob_path.extend(&path);
 
-    let mut blob_f = match File::create(&raw_blob_path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {raw_blob_path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut blob_f = create_file(&raw_blob_path)?;
 
     if let Err(e) = blob_f.write_all(blob.content()) {
       errorln!("Failed to copy file blob {raw_blob_path:?}: {e}");
       return Err(e);
     }
 
-    let mut f = match File::create(&page_path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {page_path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(page_path)?;
 
     // ========================================================================
     self.render_header(
@@ -731,18 +714,12 @@ impl<'repo> RepoRenderer<'repo> {
     index_path.push(COMMIT_SUBDIR);
 
     if !index_path.is_dir() {
-      fs::create_dir(&index_path)?;
+      create_dir(&index_path)?;
     }
 
     index_path.push("index.html");
 
-    let mut f = match File::create(&index_path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {index_path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(index_path)?;
 
     self.render_header(&mut f, PageTitle::Log { repo_name: self.name })?;
     writeln!(&mut f, "<div class=\"article-list\">")?;
@@ -927,13 +904,7 @@ impl<'repo> RepoRenderer<'repo> {
     //       know for the page needs updating
     let stats = diff.stats().expect("should be able to accumulate stats");
 
-    let mut f = match File::create(&path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(path)?;
 
     let summary = commit
       .summary()
@@ -1169,16 +1140,10 @@ impl<'repo> RepoRenderer<'repo> {
     let mut path = self.output_path.clone();
     path.push(self.name);
 
-    fs::create_dir_all(&path)?;
+    if !path.is_dir() { create_dir(&path)?; }
     path.push("index.html");
 
-    let mut f = match File::create(&path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(path)?;
 
     // ========================================================================
     self.render_header(&mut f, PageTitle::Summary { repo_name: self.name })?;
@@ -1217,13 +1182,7 @@ impl<'repo> RepoRenderer<'repo> {
     path.push(self.name);
     path.push("license.html");
 
-    let mut f = match File::create(&path) {
-      Ok(f)  => f,
-      Err(e) => {
-        errorln!("Failed to create {path:?}: {e}");
-        return Err(e);
-      }
-    };
+    let mut f = create_file(path)?;
 
     // ========================================================================
     self.render_header(&mut f, PageTitle::License { repo_name: self.name })?;
@@ -1452,13 +1411,7 @@ fn render_index(repos: &[RepoInfo], private: bool) -> io::Result<()> {
     ""
   };
 
-  let mut f = match File::create(&path) {
-    Ok(f)  => f,
-    Err(e) => {
-      errorln!("Failed to create {path:?}: {e}");
-      return Err(e);
-    }
-  };
+  let mut f = create_file(path)?;
 
   // ==========================================================================
   render_header(&mut f, PageTitle::Index)?;
@@ -1512,13 +1465,7 @@ fn setup_repo(
   let mut owner_path = path.clone();
   owner_path.push("owner");
 
-  let mut owner_f = match File::create(&owner_path) {
-    Ok(f)  => f,
-    Err(e) => {
-      errorln!("Failed to create {owner_path:?}: {e}");
-      return Err(e);
-    }
-  };
+  let mut owner_f = create_file(owner_path)?;
 
   write!(&mut owner_f, "{}", config::OWNER.trim())?;
 
@@ -1526,13 +1473,7 @@ fn setup_repo(
   let mut dsc_path = path.clone();
   dsc_path.push("description");
 
-  let mut dsc_f = match File::create(&dsc_path) {
-    Ok(f)  => f,
-    Err(e) => {
-      errorln!("Failed to create {dsc_path:?}: {e}");
-      return Err(e);
-    }
-  };
+  let mut dsc_f = create_file(dsc_path)?;
 
   write!(&mut dsc_f, "{}", description)?;
 
@@ -1541,13 +1482,7 @@ fn setup_repo(
   hook_path.push("hooks");
   hook_path.push("post-update");
 
-  let mut hook_f = match File::create(&hook_path) {
-    Ok(f)  => f,
-    Err(e) => {
-      errorln!("Failed to create {hook_path:?}: {e}");
-      return Err(e);
-    }
-  };
+  let mut hook_f = create_file(&hook_path)?;
 
   writeln!(&mut hook_f, "#!/bin/sh")?;
   if private {
@@ -1809,4 +1744,24 @@ fn main() -> ExitCode {
   }
 
   ExitCode::SUCCESS
+}
+
+fn create_file<P: AsRef<Path> + fmt::Debug>(path: P) -> io::Result<File> {
+  File::create(&path)
+    .map_err(|e| { errorln!("Failed to create {:?}: {e}", &path); e })
+}
+
+fn create_dir<P: AsRef<Path> + fmt::Debug>(path: P) -> io::Result<()> {
+  if let Err(e) = fs::create_dir(&path) {
+    errorln!("Failed to create {:?}: {e}", &path);
+    return Err(e);
+  }
+
+  #[cfg(not(debug_assertions))]
+  if let Err(e) = unix::fs::chown(&path, None, Some(config::GROUP_ID)) {
+    errorln!("Failed to configure the user group for {:?}: {e}", &path);
+    return Err(e);
+  }
+
+  Ok(())
 }
